@@ -132,8 +132,9 @@ export function buildOfflineLibrary(cachedSongs: CachedSong[]): OfflineLibrarySn
   const albums = Array.from(albumMap.values())
     .sort((a, b) => b.latestCachedAt - a.latestCachedAt || a.name.localeCompare(b.name))
     .map((album) => {
-      delete (album as Partial<OfflineAlbumRecord>).latestCachedAt;
-      return album;
+      const { latestCachedAt, ...rest } = album;
+      void latestCachedAt;
+      return rest;
     });
 
   for (const [genreKey, genre] of genresMap) {

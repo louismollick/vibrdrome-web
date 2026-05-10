@@ -16,7 +16,7 @@ export default function SongsScreen() {
   const playSongs = usePlayerStore((s) => s.playSongs);
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
   const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
+  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
 
   const [songs, setSongs] = useState<Song[]>([]);
   const [allSongs, setAllSongs] = useState<Song[]>([]);
@@ -34,8 +34,8 @@ export default function SongsScreen() {
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
-    [cachedSongs, activeServerId],
+    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
+    [cachedSongsMap, activeServerId],
   );
 
   // Load genres for filter

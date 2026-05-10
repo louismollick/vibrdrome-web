@@ -19,7 +19,7 @@ export default function AlbumsListScreen() {
   const title = searchParams.get('title') || 'Albums';
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
   const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
+  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
 
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,8 +29,8 @@ export default function AlbumsListScreen() {
   const offsetRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
-    [cachedSongs, activeServerId],
+    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
+    [cachedSongsMap, activeServerId],
   );
 
   const fetchPage = useCallback(async (offset: number, isInitial: boolean) => {

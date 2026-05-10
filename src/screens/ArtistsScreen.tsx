@@ -16,7 +16,7 @@ export default function ArtistsScreen() {
   const [loading, setLoading] = useState(true);
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
   const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
+  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
 
   const [filterText, setFilterText] = useState('');
   const [filterGenre, setFilterGenre] = useState('');
@@ -25,8 +25,8 @@ export default function ArtistsScreen() {
   const [remoteArtistGenres, setRemoteArtistGenres] = useState<Map<string, Set<string>>>(new Map());
   const [usingOfflineData, setUsingOfflineData] = useState(false);
   const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
-    [cachedSongs, activeServerId],
+    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
+    [cachedSongsMap, activeServerId],
   );
 
   useEffect(() => {

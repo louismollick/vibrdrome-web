@@ -13,10 +13,10 @@ export default function GenresScreen() {
   const [loading, setLoading] = useState(true);
   const [usingOfflineData, setUsingOfflineData] = useState(false);
   const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
+  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
   const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
-    [cachedSongs, activeServerId],
+    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
+    [cachedSongsMap, activeServerId],
   );
 
   useEffect(() => {
