@@ -28,6 +28,30 @@ import { useUIStore } from '../stores/uiStore';
 import { usePlayerStore } from '../stores/playerStore';
 import PlaybackManager from './PlaybackManager';
 
+const mediaSession = {
+  metadata: null as MediaMetadata | null,
+  playbackState: 'none' as MediaSessionPlaybackState,
+  setActionHandler: vi.fn(),
+  setPositionState: vi.fn(),
+};
+
+type PlaybackManagerTestAccess = {
+  updateMediaSession: (song: {
+    id: string;
+    title: string;
+    artist: string;
+    album: string;
+    coverArt: string;
+  }) => void;
+  setMediaSessionPlaybackState: (state: MediaSessionPlaybackState) => void;
+  updateRadioMediaSession: (station: {
+    stationId: string;
+    stationName: string;
+    streamUrl: string;
+    coverArt: string;
+  }) => void;
+};
+
 beforeEach(() => {
   mockCast.getCurrentTime.mockReset();
   mockCast.onSessionEnd.mockReset();
@@ -36,6 +60,29 @@ beforeEach(() => {
   mockCast.play.mockReset();
   mockCast.setVolume.mockReset();
   useUIStore.setState({ castConnected: false });
+  mediaSession.metadata = null;
+  mediaSession.playbackState = 'none';
+  mediaSession.setActionHandler.mockReset();
+  mediaSession.setPositionState.mockReset();
+
+  Object.defineProperty(navigator, 'mediaSession', {
+    configurable: true,
+    value: mediaSession,
+  });
+
+  vi.stubGlobal('MediaMetadata', class MediaMetadata {
+    title: string;
+    artist: string;
+    album: string;
+    artwork: MediaImage[];
+
+    constructor(init: MediaMetadataInit) {
+      this.title = init.title ?? '';
+      this.artist = init.artist ?? '';
+      this.album = init.album ?? '';
+      this.artwork = init.artwork ?? [];
+    }
+  });
 });
 
 describe('PlaybackManager cast integration', () => {
@@ -89,5 +136,51 @@ describe('PlaybackManager cast integration', () => {
     pm.setVolume(0.4);
 
     expect(mockCast.setVolume).toHaveBeenCalledWith(0.4);
+  });
+
+  it('publishes richer song media session state', () => {
+    const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
+    const song = {
+      id: 'song-1',
+      title: 'Track',
+      artist: 'Artist',
+      album: 'Album',
+      coverArt: 'cover-1',
+    };
+
+    pm.updateMediaSession(song);
+    pm.setMediaSessionPlaybackState('playing');
+
+    expect(mediaSession.metadata).toMatchObject({
+      title: 'Track',
+      artist: 'Artist',
+      album: 'Album',
+    });
+    expect(mediaSession.setActionHandler).toHaveBeenCalledWith('play', expect.any(Function));
+    expect(mediaSession.setActionHandler).toHaveBeenCalledWith('pause', expect.any(Function));
+    expect(mediaSession.setActionHandler).toHaveBeenCalledWith('nexttrack', expect.any(Function));
+    expect(mediaSession.playbackState).toBe('playing');
+  });
+
+  it('publishes radio media session state with transport-only controls', () => {
+    const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
+    const station = {
+      stationId: 'station-1',
+      stationName: 'Deep Space FM',
+      streamUrl: 'https://example.test/radio',
+      coverArt: 'radio-cover',
+    };
+
+    pm.updateRadioMediaSession(station);
+
+    expect(mediaSession.metadata).toMatchObject({
+      title: 'Deep Space FM',
+      artist: 'Internet Radio',
+      album: 'Live Stream',
+    });
+    expect(mediaSession.setActionHandler).toHaveBeenCalledWith('play', expect.any(Function));
+    expect(mediaSession.setActionHandler).toHaveBeenCalledWith('pause', expect.any(Function));
+    expect(mediaSession.setActionHandler).toHaveBeenCalledWith('nexttrack', null);
+    expect(mediaSession.setActionHandler).toHaveBeenCalledWith('seekto', null);
   });
 });
