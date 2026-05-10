@@ -1,17 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { usePlayerStore } from '../stores/playerStore';
+import { useAuthStore } from '../stores/authStore';
+import { useDownloadStore } from '../stores/downloadStore';
 import { shareUrl } from '../utils/share';
 import { useArtistInfo } from '../hooks/useArtistInfo';
-import type { Artist, Song } from '../types/subsonic';
+import type { Album, Artist, Song } from '../types/subsonic';
 import { useArtistImage } from '../hooks/useArtistImage';
 import { Header, AlbumCard, CoverArt, LoadingSpinner } from '../components/common';
+import { buildOfflineLibrary } from '../utils/offlineLibrary';
 
 export default function ArtistDetailScreen() {
   const { artistId } = useParams<{ artistId: string }>();
   const [artist, setArtist] = useState<Artist | null>(null);
   const [loading, setLoading] = useState(true);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
+  const offlineLibrary = useMemo(
+    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
+    [cachedSongs, activeServerId],
+  );
 
   useEffect(() => {
     if (!artistId) return;
@@ -19,15 +29,32 @@ export default function ArtistDetailScreen() {
       try {
         const client = getSubsonicClient();
         const data = await client.getArtist(artistId);
+        setUsingOfflineData(false);
         setArtist(data);
       } catch (err) {
         console.error('Failed to load artist:', err);
+        const artistEntry = offlineLibrary.artistIndexes
+          .flatMap((index) => index.artist ?? [])
+          .find((item) => item.id === artistId);
+        const artistAlbums = offlineLibrary.albums.filter((album) => album.artistId === artistId);
+        setUsingOfflineData(true);
+        setArtist(
+          artistEntry
+            ? {
+                id: artistEntry.id,
+                name: artistEntry.name,
+                coverArt: artistEntry.coverArt,
+                albumCount: artistEntry.albumCount,
+                album: artistAlbums as Album[],
+              }
+            : null,
+        );
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [artistId]);
+  }, [artistId, offlineLibrary.albums, offlineLibrary.artistIndexes]);
 
   const handleRadio = async () => {
     if (!artist) return;
@@ -118,6 +145,12 @@ export default function ArtistDetailScreen() {
       />
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {usingOfflineData && (
+          <div className="pb-3 text-xs text-text-muted">
+            Showing downloaded artist from offline cache.
+          </div>
+        )}
+
         {/* Artist bio from Last.fm */}
         <ArtistBio artistName={artist.name} />
 

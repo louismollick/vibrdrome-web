@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { usePlayerStore } from '../stores/playerStore';
+import { useAuthStore } from '../stores/authStore';
+import { useDownloadStore } from '../stores/downloadStore';
 import { shareUrl } from '../utils/share';
 import type { Album } from '../types/subsonic';
 import { Header, CoverArt, SongRow, LoadingSpinner } from '../components/common';
 import DownloadButton from '../components/common/DownloadButton';
+import { buildOfflineLibrary } from '../utils/offlineLibrary';
 
 function formatDuration(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -21,6 +24,13 @@ export default function AlbumDetailScreen() {
   const [album, setAlbum] = useState<Album | null>(null);
   const [loading, setLoading] = useState(true);
   const [starred, setStarred] = useState(false);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
+  const offlineLibrary = useMemo(
+    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
+    [cachedSongs, activeServerId],
+  );
 
   useEffect(() => {
     if (!albumId) return;
@@ -28,16 +38,21 @@ export default function AlbumDetailScreen() {
       try {
         const client = getSubsonicClient();
         const data = await client.getAlbum(albumId);
+        setUsingOfflineData(false);
         setAlbum(data);
         setStarred(!!data.starred);
       } catch (err) {
         console.error('Failed to load album:', err);
+        const offlineAlbum = offlineLibrary.albums.find((item) => item.id === albumId) ?? null;
+        setUsingOfflineData(true);
+        setAlbum(offlineAlbum);
+        setStarred(!!offlineAlbum?.starred);
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [albumId]);
+  }, [albumId, offlineLibrary.albums]);
 
   const handlePlay = () => {
     if (!album?.song?.length) return;
@@ -100,6 +115,12 @@ export default function AlbumDetailScreen() {
       <Header title={album.name} showBack />
 
       <div className="flex-1 overflow-y-auto">
+        {usingOfflineData && (
+          <div className="px-4 pb-3 text-xs text-text-muted">
+            Showing downloaded album from offline cache.
+          </div>
+        )}
+
         {/* Album header info */}
         <div className="flex flex-col items-center px-3 pb-4 md:px-4">
           <CoverArt coverArt={album.coverArt} size={200} className="md:!h-[240px] md:!w-[240px]" />

@@ -1,9 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
+import { useAuthStore } from '../stores/authStore';
+import { useDownloadStore } from '../stores/downloadStore';
 import type { Album, AlbumListType, Genre } from '../types/subsonic';
 import { Header, AlbumCard, LoadingSpinner } from '../components/common';
+import { buildOfflineLibrary, filterOfflineAlbums } from '../utils/offlineLibrary';
 
 const PAGE_SIZE = 40;
 
@@ -15,13 +18,20 @@ export default function AlbumsListScreen() {
   const toYear = searchParams.get('toYear') ? Number(searchParams.get('toYear')) : undefined;
   const title = searchParams.get('title') || 'Albums';
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
 
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
   const offsetRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const offlineLibrary = useMemo(
+    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
+    [cachedSongs, activeServerId],
+  );
 
   const fetchPage = useCallback(async (offset: number, isInitial: boolean) => {
     if (isInitial) setLoading(true);
@@ -32,15 +42,21 @@ export default function AlbumsListScreen() {
       const page = await client.getAlbumList2(type, PAGE_SIZE, offset, genre, fromYear, toYear, activeFolderId ?? undefined);
       if (page.length < PAGE_SIZE) setHasMore(false);
 
+      setUsingOfflineData(false);
       setAlbums((prev) => (isInitial ? page : [...prev, ...page]));
       offsetRef.current = offset + page.length;
     } catch (err) {
       console.error('Failed to load albums:', err);
+      const offlineAlbums = filterOfflineAlbums(offlineLibrary.albums, { type, genre, fromYear, toYear });
+      setUsingOfflineData(true);
+      setAlbums(offlineAlbums);
+      setHasMore(false);
+      offsetRef.current = offlineAlbums.length;
     } finally {
       if (isInitial) setLoading(false);
       else setLoadingMore(false);
     }
-  }, [type, genre, fromYear, toYear, activeFolderId]);
+  }, [type, genre, fromYear, toYear, activeFolderId, offlineLibrary.albums]);
 
   useEffect(() => {
     offsetRef.current = 0;
@@ -79,9 +95,11 @@ export default function AlbumsListScreen() {
     if (showFilter && genres.length === 0) {
       getSubsonicClient().getGenres().then((g) => {
         setGenres(g.sort((a, b) => a.value.localeCompare(b.value)));
-      }).catch(() => { /* silently fail */ });
+      }).catch(() => {
+        setGenres(offlineLibrary.genres);
+      });
     }
-  }, [showFilter, genres.length]);
+  }, [showFilter, genres.length, offlineLibrary.genres]);
 
   if (loading) {
     return (
@@ -109,6 +127,12 @@ export default function AlbumsListScreen() {
   return (
     <div className="flex h-full flex-col bg-bg-primary">
       <Header title={`${title}${filteredAlbums.length > 0 ? ` (${filteredAlbums.length})` : ''}`} showBack />
+
+      {usingOfflineData && (
+        <div className="px-4 pb-3 text-xs text-text-muted">
+          Showing downloaded albums from offline cache.
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3">

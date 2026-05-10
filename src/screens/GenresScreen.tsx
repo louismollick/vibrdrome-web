@@ -1,13 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
+import { useAuthStore } from '../stores/authStore';
+import { useDownloadStore } from '../stores/downloadStore';
 import type { Genre } from '../types/subsonic';
 import { Header, LoadingSpinner } from '../components/common';
+import { buildOfflineLibrary } from '../utils/offlineLibrary';
 
 export default function GenresScreen() {
   const navigate = useNavigate();
   const [genres, setGenres] = useState<Genre[]>([]);
   const [loading, setLoading] = useState(true);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
+  const offlineLibrary = useMemo(
+    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
+    [cachedSongs, activeServerId],
+  );
 
   useEffect(() => {
     const load = async () => {
@@ -16,15 +26,18 @@ export default function GenresScreen() {
         const data = await client.getGenres();
         // Sort alphabetically by name
         data.sort((a, b) => a.value.localeCompare(b.value));
+        setUsingOfflineData(false);
         setGenres(data);
       } catch (err) {
         console.error('Failed to load genres:', err);
+        setUsingOfflineData(true);
+        setGenres(offlineLibrary.genres);
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, []);
+  }, [offlineLibrary.genres]);
 
   const handleGenreClick = (genre: Genre) => {
     const params = new URLSearchParams({
@@ -47,6 +60,12 @@ export default function GenresScreen() {
   return (
     <div className="flex h-full flex-col bg-bg-primary">
       <Header title="Genres" showBack />
+
+      {usingOfflineData && (
+        <div className="px-4 pb-3 text-xs text-text-muted">
+          Showing downloaded genres from offline cache.
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-4 pb-20">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">

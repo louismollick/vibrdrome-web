@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { usePlayerStore } from '../stores/playerStore';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
+import { useAuthStore } from '../stores/authStore';
+import { useDownloadStore } from '../stores/downloadStore';
 import type { ArtistIndex, Genre, Song } from '../types/subsonic';
 import { Header, CoverArt, LoadingSpinner } from '../components/common';
+import { buildOfflineLibrary } from '../utils/offlineLibrary';
 
 export default function ArtistsScreen() {
   const navigate = useNavigate();
@@ -12,12 +15,19 @@ export default function ArtistsScreen() {
   const [indexes, setIndexes] = useState<ArtistIndex[]>([]);
   const [loading, setLoading] = useState(true);
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const cachedSongs = useDownloadStore((s) => Array.from(s.cachedSongs.values()));
 
   const [filterText, setFilterText] = useState('');
   const [filterGenre, setFilterGenre] = useState('');
   const [showFilter, setShowFilter] = useState(false);
   const [genres, setGenres] = useState<Genre[]>([]);
-  const [allArtistGenres, setAllArtistGenres] = useState<Map<string, Set<string>>>(new Map());
+  const [remoteArtistGenres, setRemoteArtistGenres] = useState<Map<string, Set<string>>>(new Map());
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+  const offlineLibrary = useMemo(
+    () => buildOfflineLibrary(cachedSongs.filter((song) => song.serverId === activeServerId)),
+    [cachedSongs, activeServerId],
+  );
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- set loading before async fetch
@@ -29,20 +39,24 @@ export default function ArtistsScreen() {
           client.getArtists(activeFolderId ?? undefined),
           client.getGenres(),
         ]);
+        setUsingOfflineData(false);
         setIndexes(data);
         setGenres(genreData.sort((a, b) => a.value.localeCompare(b.value)));
       } catch (err) {
         console.error('Failed to load artists:', err);
+        setUsingOfflineData(true);
+        setIndexes(offlineLibrary.artistIndexes);
+        setGenres(offlineLibrary.genres);
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [activeFolderId]);
+  }, [activeFolderId, offlineLibrary.artistGenres, offlineLibrary.artistIndexes, offlineLibrary.genres]);
 
   // Build artist→genres map when genre filter is first used
   useEffect(() => {
-    if (!filterGenre || allArtistGenres.size > 0) return;
+    if (usingOfflineData || !filterGenre) return;
 
     // Fetch albums to map artists to genres
     const load = async () => {
@@ -56,11 +70,17 @@ export default function ArtistsScreen() {
             map.get(album.artistId)!.add(album.genre.toLowerCase());
           }
         }
-        setAllArtistGenres(map);
-      } catch { /* silently fail */ }
+        if (map.size > 0) {
+          setRemoteArtistGenres(map);
+        }
+      } catch {
+        // Ignore and fall back to cached metadata below.
+      }
     };
     load();
-  }, [filterGenre, allArtistGenres.size, activeFolderId]);
+  }, [filterGenre, activeFolderId, usingOfflineData]);
+
+  const artistGenres = usingOfflineData ? offlineLibrary.artistGenres : remoteArtistGenres;
 
   const [radioLoading, setRadioLoading] = useState(false);
 
@@ -119,11 +139,11 @@ export default function ArtistsScreen() {
     })).filter((idx) => idx.artist && idx.artist.length > 0);
   }
 
-  if (filterGenre && allArtistGenres.size > 0) {
+  if (filterGenre && artistGenres.size > 0) {
     const g = filterGenre.toLowerCase();
     filteredIndexes = filteredIndexes.map((idx) => ({
       ...idx,
-      artist: idx.artist?.filter((a) => allArtistGenres.get(a.id)?.has(g)),
+      artist: idx.artist?.filter((a) => artistGenres.get(a.id)?.has(g)),
     })).filter((idx) => idx.artist && idx.artist.length > 0);
   }
 
@@ -132,6 +152,12 @@ export default function ArtistsScreen() {
   return (
     <div className="flex h-full flex-col bg-bg-primary">
       <Header title={`Artists${totalArtists > 0 ? ` (${totalArtists})` : ''}`} showBack />
+
+      {usingOfflineData && (
+        <div className="px-4 pb-3 text-xs text-text-muted">
+          Showing downloaded artists from offline cache.
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3">

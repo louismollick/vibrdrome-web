@@ -20,9 +20,17 @@ export interface CachedSong {
   cacheKey: string;
   title: string;
   artist?: string;
+  artistId?: string;
   album?: string;
   albumId?: string;
+  track?: number;
+  year?: number;
+  genre?: string;
   coverArt?: string;
+  duration?: number;
+  discNumber?: number;
+  created?: string;
+  starred?: string;
   size: number;
   cachedAt: number;
 }
@@ -178,9 +186,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       cacheKey: item.cacheKey,
       title: item.song.title,
       artist: item.song.artist,
+      artistId: item.song.artistId,
       album: item.song.album,
       albumId: item.albumId,
+      track: item.song.track,
+      year: item.song.year,
+      genre: item.song.genre,
       coverArt: item.song.coverArt,
+      duration: item.song.duration,
+      discNumber: item.song.discNumber,
+      created: item.song.created,
+      starred: item.song.starred,
       size,
       cachedAt: Date.now(),
     };
