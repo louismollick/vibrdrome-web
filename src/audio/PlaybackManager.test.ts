@@ -35,7 +35,7 @@ const mediaSession = {
   setPositionState: vi.fn(),
 };
 
-type PlaybackManagerTestAccess = PlaybackManager & {
+type PlaybackManagerTestAccess = {
   updateMediaSession: (song: {
     id: string;
     title: string;
