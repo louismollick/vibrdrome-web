@@ -4,6 +4,7 @@ import { useEQStore } from '../stores/eqStore';
 import { useUIStore } from '../stores/uiStore';
 import { getCastManager } from './CastManager';
 import type { Song } from '../types/subsonic';
+import type { RadioState } from '../stores/playerStore';
 
 const EQ_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 const EQ_Q = 1.414;
@@ -11,6 +12,16 @@ const POSITION_UPDATE_MS = 250;
 const SCROBBLE_MIN_SECONDS = 30;
 const SCROBBLE_PERCENT = 0.5;
 // Sleep fade duration is now configurable via uiStore.sleepFadeDuration
+
+function isIOSWebPlaybackEnvironment(): boolean {
+  if (typeof navigator === 'undefined') return false;
+
+  const userAgent = navigator.userAgent ?? '';
+  const platform = navigator.platform ?? '';
+  const touchCapableMac = platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+
+  return /iPad|iPhone|iPod/i.test(userAgent) || touchCapableMac;
+}
 
 class PlaybackManager {
   private audioContext: AudioContext | null = null;
@@ -39,6 +50,19 @@ class PlaybackManager {
   private unsubscribeEQ: (() => void) | null = null;
   private preloadedSongId: string | null = null;
   private preloadedIndex: number = -1;
+  private readonly backgroundSafeMode = isIOSWebPlaybackEnvironment();
+  private currentReplayGainMultiplier = 1;
+  private positionTimerType: 'raf' | 'interval' | null = null;
+  private readonly visibilityHandler = () => {
+    if (typeof document !== 'undefined' && !document.hidden) {
+      this.configureAudioSession();
+      this.recoverPlaybackAfterForeground();
+    }
+  };
+  private readonly pageShowHandler = () => {
+    this.configureAudioSession();
+    this.recoverPlaybackAfterForeground();
+  };
   // Suppresses the external-pause handler while we pause the audio element
   // internally (e.g. during play() source swap, crossfade, gapless handoff).
   private internalPause = false;
@@ -50,6 +74,8 @@ class PlaybackManager {
     this.playerB.preload = 'auto';
     this.playerA.crossOrigin = 'anonymous';
     this.playerB.crossOrigin = 'anonymous';
+    this.playerA.volume = this.currentVolume;
+    this.playerB.volume = this.currentVolume;
 
     // Handle track ended events
     this.playerA.addEventListener('ended', () => this.handleTrackEnded('A'));
@@ -62,6 +88,12 @@ class PlaybackManager {
     // Handle duration metadata
     this.playerA.addEventListener('loadedmetadata', () => this.handleMetadata('A'));
     this.playerB.addEventListener('loadedmetadata', () => this.handleMetadata('B'));
+    this.playerA.addEventListener('timeupdate', () => this.handleTimeUpdate('A'));
+    this.playerB.addEventListener('timeupdate', () => this.handleTimeUpdate('B'));
+    this.playerA.addEventListener('ratechange', () => this.handleRateChange('A'));
+    this.playerB.addEventListener('ratechange', () => this.handleRateChange('B'));
+    this.playerA.addEventListener('playing', () => this.handlePlaying('A'));
+    this.playerB.addEventListener('playing', () => this.handlePlaying('B'));
 
     // Detect external pauses (OS audio-focus loss, Bluetooth dropout, buffer underrun)
     // so the UI reflects reality instead of showing "playing" while silent.
@@ -71,15 +103,27 @@ class PlaybackManager {
     // When the cast session ends (user disconnects, network drops, etc.), resume
     // playback locally at the same position so the music doesn't just stop.
     getCastManager().onSessionEnd((lastPositionMs) => this.handleCastSessionEnded(lastPositionMs));
+
+    this.configureAudioSession();
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pageshow', this.pageShowHandler);
+    }
   }
 
   /** Call from a user gesture to ensure AudioContext is running before async work. */
   warmup(): void {
+    this.configureAudioSession();
+    if (this.backgroundSafeMode) return;
     this.ensureAudioContext();
   }
 
   /** Create AudioContext if needed and resume if suspended. */
   private ensureAudioContext(): void {
+    if (this.backgroundSafeMode) return;
     if (!this.audioContext) {
       this.audioContext = new AudioContext();
     }
@@ -90,6 +134,7 @@ class PlaybackManager {
 
   /** Connect audio elements to Web Audio graph (for EQ, visualizer). Lazy — called after first play. */
   private ensureAudioChain(): void {
+    if (this.backgroundSafeMode) return;
     if (this.sourceA) return; // Already connected
 
     this.ensureAudioContext();
@@ -108,6 +153,8 @@ class PlaybackManager {
   }
 
   init(): void {
+    this.configureAudioSession();
+    if (this.backgroundSafeMode) return;
     this.ensureAudioChain();
   }
 
@@ -143,8 +190,11 @@ class PlaybackManager {
     const quality = uiState.streamQuality;
     const url = getSubsonicClient().stream(song.id, quality || undefined);
 
+    this.configureAudioSession();
+    this.currentReplayGainMultiplier = 1;
     audio.src = url;
     audio.load();
+    this.applyElementVolume();
 
     // Reset scrobble tracking
     this.scrobbled = false;
@@ -167,7 +217,7 @@ class PlaybackManager {
 
     // Connect to Web Audio graph after first successful play.
     // On subsequent plays crossOrigin is already set so no re-fetch.
-    if (!this.sourceA) {
+    if (!this.backgroundSafeMode && !this.sourceA) {
       this.ensureAudioChain();
     }
 
@@ -186,6 +236,7 @@ class PlaybackManager {
 
     this.applyReplayGain(song);
     this.updateMediaSession(song);
+    this.setMediaSessionPlaybackState('playing');
     this.startPositionTracking();
   }
 
@@ -197,12 +248,15 @@ class PlaybackManager {
       this.getActiveAudio().pause();
       this.internalPause = false;
     }
+    this.setMediaSessionPlaybackState('paused');
+    this.updateMediaSessionPosition();
     this.stopPositionTracking();
   }
 
   async resume(): Promise<void> {
     if (useUIStore.getState().castConnected) {
       getCastManager().play();
+      this.setMediaSessionPlaybackState('playing');
       this.startPositionTracking();
       return;
     }
@@ -214,6 +268,8 @@ class PlaybackManager {
     } catch (err) {
       console.error('[PlaybackManager] Resume error:', err);
     }
+    this.setMediaSessionPlaybackState('playing');
+    this.updateMediaSessionPosition();
     this.startPositionTracking();
   }
 
@@ -242,7 +298,17 @@ class PlaybackManager {
     if (thisRadioId !== this.radioPlayId) return; // stale
 
     const audio = new Audio(resolvedUrl);
+    this.configureAudioSession();
+    this.currentReplayGainMultiplier = 1;
     audio.volume = this.currentVolume;
+    audio.addEventListener('playing', () => {
+      if (this.radioAudio !== audio) return;
+      this.setMediaSessionPlaybackState('playing');
+    });
+    audio.addEventListener('pause', () => {
+      if (this.radioAudio !== audio || this.internalPause) return;
+      this.setMediaSessionPlaybackState('paused');
+    });
     audio.addEventListener('error', () => {
       if (this.radioPlayId !== thisRadioId) return;
       console.error('[PlaybackManager] Radio stream error');
@@ -257,6 +323,8 @@ class PlaybackManager {
         return;
       }
       this.radioAudio = audio;
+      this.updateRadioMediaSession(usePlayerStore.getState().radioMode);
+      this.setMediaSessionPlaybackState('playing');
     } catch (err) {
       if (thisRadioId !== this.radioPlayId) return;
       console.error('[PlaybackManager] Radio play error:', err);
@@ -270,18 +338,21 @@ class PlaybackManager {
       this.radioAudio.src = '';
       this.radioAudio = null;
     }
+    this.clearMediaSession();
   }
 
   pauseRadio(): void {
     if (this.radioAudio) {
       this.radioAudio.pause();
     }
+    this.setMediaSessionPlaybackState('paused');
   }
 
   resumeRadio(): void {
     if (this.radioAudio) {
       this.radioAudio.play().catch(() => { /* ignore */ });
     }
+    this.setMediaSessionPlaybackState('playing');
   }
 
   private async resolveRadioUrl(url: string): Promise<string> {
@@ -320,6 +391,7 @@ class PlaybackManager {
       this.getActiveAudio().currentTime = timeMs / 1000;
     }
     usePlayerStore.getState().setPosition(timeMs);
+    this.updateMediaSessionPosition();
   }
 
   getPosition(): number {
@@ -358,14 +430,21 @@ class PlaybackManager {
     if (useUIStore.getState().castConnected) {
       getCastManager().setVolume(this.currentVolume);
     }
+
+    this.applyElementVolume();
   }
 
   setPlaybackRate(rate: number): void {
     this.playerA.playbackRate = rate;
     this.playerB.playbackRate = rate;
+    if (this.radioAudio) {
+      this.radioAudio.playbackRate = rate;
+    }
+    this.updateMediaSessionPosition();
   }
 
   updateEQ(bands: number[], enabled: boolean): void {
+    if (this.backgroundSafeMode) return;
     if (this.eqFilters.length !== 10) return;
 
     for (let i = 0; i < 10; i++) {
@@ -374,6 +453,7 @@ class PlaybackManager {
   }
 
   getAnalyser(): AnalyserNode | null {
+    if (this.backgroundSafeMode) return null;
     return this.analyser;
   }
 
@@ -450,6 +530,13 @@ class PlaybackManager {
     this.gainB = null;
     this.eqFilters = [];
     this.analyser = null;
+
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+    }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pageshow', this.pageShowHandler);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -554,16 +641,32 @@ class PlaybackManager {
         }
       }
 
-      this.positionInterval = window.requestAnimationFrame(tick);
+      if (this.positionTimerType === 'raf') {
+        this.positionInterval = window.requestAnimationFrame(tick);
+      }
     };
+
+    if (this.backgroundSafeMode) {
+      this.positionTimerType = 'interval';
+      this.positionInterval = window.setInterval(tick, POSITION_UPDATE_MS);
+      tick();
+      return;
+    }
+
+    this.positionTimerType = 'raf';
     this.positionInterval = window.requestAnimationFrame(tick);
   }
 
   private stopPositionTracking(): void {
     if (this.positionInterval !== null) {
-      cancelAnimationFrame(this.positionInterval);
+      if (this.positionTimerType === 'interval') {
+        clearInterval(this.positionInterval);
+      } else {
+        cancelAnimationFrame(this.positionInterval);
+      }
       this.positionInterval = null;
     }
+    this.positionTimerType = null;
   }
 
   private checkScrobble(): void {
@@ -604,6 +707,7 @@ class PlaybackManager {
   }
 
   private checkCrossfadeStart(): void {
+    if (this.backgroundSafeMode) return;
     const state = usePlayerStore.getState();
     if (!state.crossfadeEnabled || this.crossfading) return;
 
@@ -654,6 +758,7 @@ class PlaybackManager {
   }
 
   private startCrossfade(nextSong: Song, nextIndex: number, duration: number): void {
+    if (this.backgroundSafeMode) return;
     this.crossfading = true;
 
     const inactiveAudio = this.getInactiveAudio();
@@ -712,6 +817,7 @@ class PlaybackManager {
   }
 
   private cancelCrossfade(): void {
+    if (this.backgroundSafeMode) return;
     if (this.crossfadeTimer !== null) {
       clearTimeout(this.crossfadeTimer);
       this.crossfadeTimer = null;
@@ -740,27 +846,8 @@ class PlaybackManager {
   }
 
   private applyReplayGain(song: Song): void {
-    if (!song.replayGain) return;
-
-    const mode = useUIStore.getState().replayGainMode;
-    if (mode === 'off') return;
-
-    const gain = mode === 'album'
-      ? (song.replayGain.albumGain ?? song.replayGain.trackGain ?? 0)
-      : (song.replayGain.trackGain ?? song.replayGain.albumGain ?? 0);
-
-    if (gain === 0) return;
-
-    const peak = mode === 'album'
-      ? (song.replayGain.albumPeak ?? song.replayGain.trackPeak ?? 1.0)
-      : (song.replayGain.trackPeak ?? song.replayGain.albumPeak ?? 1.0);
-
-    let gainMultiplier = Math.pow(10, gain / 20);
-
-    // Prevent clipping: scale down if gain would exceed peak headroom
-    if (gainMultiplier * peak > 1.0) {
-      gainMultiplier = 1.0 / peak;
-    }
+    const gainMultiplier = this.getReplayGainMultiplier(song);
+    this.currentReplayGainMultiplier = gainMultiplier;
 
     const activeGain = this.activePlayer === 'A' ? this.gainA : this.gainB;
     if (activeGain) {
@@ -768,6 +855,8 @@ class PlaybackManager {
       activeGain.gain.cancelScheduledValues(now);
       activeGain.gain.setTargetAtTime(this.currentVolume * gainMultiplier, now, 0.02);
     }
+
+    this.applyElementVolume();
   }
 
   private updateMediaSession(song: Song): void {
@@ -790,41 +879,43 @@ class PlaybackManager {
       artwork,
     });
 
-    navigator.mediaSession.setActionHandler('play', () => {
+    this.setMediaSessionActionHandler('play', () => {
       this.resume();
       usePlayerStore.getState().setPlaying(true);
     });
 
-    navigator.mediaSession.setActionHandler('pause', () => {
+    this.setMediaSessionActionHandler('pause', () => {
       this.pause();
       usePlayerStore.getState().setPlaying(false);
     });
 
-    navigator.mediaSession.setActionHandler('previoustrack', () => {
+    this.setMediaSessionActionHandler('previoustrack', () => {
       usePlayerStore.getState().previous();
     });
 
-    navigator.mediaSession.setActionHandler('nexttrack', () => {
+    this.setMediaSessionActionHandler('nexttrack', () => {
       usePlayerStore.getState().next();
     });
 
-    navigator.mediaSession.setActionHandler('seekto', (details) => {
+    this.setMediaSessionActionHandler('seekto', (details) => {
       if (details.seekTime != null) {
         this.seek(details.seekTime * 1000);
       }
     });
 
-    navigator.mediaSession.setActionHandler('seekforward', (details) => {
+    this.setMediaSessionActionHandler('seekforward', (details) => {
       const skipTime = details.seekOffset ?? 10;
       const audio = this.getActiveAudio();
       this.seek(Math.min((audio.currentTime + skipTime) * 1000, (audio.duration || 0) * 1000));
     });
 
-    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+    this.setMediaSessionActionHandler('seekbackward', (details) => {
       const skipTime = details.seekOffset ?? 10;
       const audio = this.getActiveAudio();
       this.seek(Math.max((audio.currentTime - skipTime) * 1000, 0));
     });
+
+    this.updateMediaSessionPosition();
   }
 
   private handleTrackEnded(player: 'A' | 'B'): void {
@@ -937,6 +1028,7 @@ class PlaybackManager {
   }
 
   private checkGaplessPreload(): void {
+    if (this.backgroundSafeMode) return;
     const state = usePlayerStore.getState();
     // Only preload if gapless enabled, crossfade disabled, not already preloaded, not crossfading
     if (!state.gaplessEnabled || state.crossfadeEnabled || this.crossfading || this.preloadedSongId) return;
@@ -1003,6 +1095,8 @@ class PlaybackManager {
     if (usePlayerStore.getState().isPlaying) {
       usePlayerStore.getState().setPlaying(false);
     }
+    this.setMediaSessionPlaybackState('paused');
+    this.updateMediaSessionPosition();
   }
 
   private async handleCastSessionEnded(lastPositionMs: number): Promise<void> {
@@ -1066,6 +1160,7 @@ class PlaybackManager {
 
     this.applyReplayGain(song);
     this.updateMediaSession(song);
+    this.setMediaSessionPlaybackState('playing');
     this.startPositionTracking();
   }
 
@@ -1074,6 +1169,209 @@ class PlaybackManager {
     const audio = this.getActiveAudio();
     if (!isNaN(audio.duration)) {
       usePlayerStore.getState().setDuration(Math.round(audio.duration * 1000));
+    }
+    this.updateMediaSessionPosition();
+  }
+
+  private handleTimeUpdate(player: 'A' | 'B'): void {
+    if (player !== this.activePlayer || this.crossfading) return;
+    this.updateMediaSessionPosition();
+  }
+
+  private handleRateChange(player: 'A' | 'B'): void {
+    if (player !== this.activePlayer || this.crossfading) return;
+    this.updateMediaSessionPosition();
+  }
+
+  private handlePlaying(player: 'A' | 'B'): void {
+    if (player !== this.activePlayer) return;
+    this.setMediaSessionPlaybackState('playing');
+    this.updateMediaSessionPosition();
+  }
+
+  private updateRadioMediaSession(station: RadioState | null): void {
+    if (!station || !('mediaSession' in navigator)) return;
+
+    const client = getSubsonicClient();
+    const artwork: MediaImage[] = [];
+    if (station.coverArt) {
+      artwork.push(
+        { src: client.getCoverArt(station.coverArt, 96), sizes: '96x96', type: 'image/jpeg' },
+        { src: client.getCoverArt(station.coverArt, 256), sizes: '256x256', type: 'image/jpeg' },
+        { src: client.getCoverArt(station.coverArt, 512), sizes: '512x512', type: 'image/jpeg' },
+      );
+    }
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: station.stationName,
+      artist: 'Internet Radio',
+      album: 'Live Stream',
+      artwork,
+    });
+
+    this.setMediaSessionActionHandler('play', () => {
+      this.resumeRadio();
+      usePlayerStore.setState({ radioPlaying: true });
+    });
+    this.setMediaSessionActionHandler('pause', () => {
+      this.pauseRadio();
+      usePlayerStore.setState({ radioPlaying: false });
+    });
+    this.setMediaSessionActionHandler('previoustrack', null);
+    this.setMediaSessionActionHandler('nexttrack', null);
+    this.setMediaSessionActionHandler('seekto', null);
+    this.setMediaSessionActionHandler('seekforward', null);
+    this.setMediaSessionActionHandler('seekbackward', null);
+    this.clearMediaSessionPosition();
+  }
+
+  private setMediaSessionActionHandler(
+    action: MediaSessionAction,
+    handler: MediaSessionActionHandler | null,
+  ): void {
+    if (!('mediaSession' in navigator)) return;
+
+    try {
+      navigator.mediaSession.setActionHandler(action, handler);
+    } catch {
+      // Ignore unsupported actions on browsers with partial Media Session support.
+    }
+  }
+
+  private setMediaSessionPlaybackState(state: MediaSessionPlaybackState): void {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.playbackState = state;
+  }
+
+  private updateMediaSessionPosition(): void {
+    if (!('mediaSession' in navigator)) return;
+    if (usePlayerStore.getState().radioMode) {
+      this.clearMediaSessionPosition();
+      return;
+    }
+
+    const mediaSession = navigator.mediaSession as MediaSession & {
+      setPositionState?: (state?: MediaPositionState) => void;
+    };
+    if (typeof mediaSession.setPositionState !== 'function') return;
+
+    const audio = this.getActiveAudio();
+    if (!audio.src || audio.src === window.location.href) {
+      this.clearMediaSessionPosition();
+      return;
+    }
+
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+      this.clearMediaSessionPosition();
+      return;
+    }
+
+    const position = Math.max(0, Math.min(audio.currentTime || 0, audio.duration));
+
+    try {
+      mediaSession.setPositionState({
+        duration: audio.duration,
+        playbackRate: audio.playbackRate || 1,
+        position,
+      });
+    } catch {
+      // Safari can reject invalid position-state updates; ignore and keep playback going.
+    }
+  }
+
+  private clearMediaSessionPosition(): void {
+    if (!('mediaSession' in navigator)) return;
+
+    const mediaSession = navigator.mediaSession as MediaSession & {
+      setPositionState?: (state?: MediaPositionState) => void;
+    };
+    if (typeof mediaSession.setPositionState !== 'function') return;
+
+    try {
+      mediaSession.setPositionState();
+    } catch {
+      // Ignore position-state clear failures on partial implementations.
+    }
+  }
+
+  private clearMediaSession(): void {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = null;
+    this.setMediaSessionPlaybackState('none');
+    this.clearMediaSessionPosition();
+  }
+
+  private getReplayGainMultiplier(song: Song): number {
+    if (!song.replayGain) return 1;
+
+    const mode = useUIStore.getState().replayGainMode;
+    if (mode === 'off') return 1;
+
+    const gain = mode === 'album'
+      ? (song.replayGain.albumGain ?? song.replayGain.trackGain ?? 0)
+      : (song.replayGain.trackGain ?? song.replayGain.albumGain ?? 0);
+
+    if (gain === 0) return 1;
+
+    const peak = mode === 'album'
+      ? (song.replayGain.albumPeak ?? song.replayGain.trackPeak ?? 1.0)
+      : (song.replayGain.trackPeak ?? song.replayGain.albumPeak ?? 1.0);
+
+    let gainMultiplier = Math.pow(10, gain / 20);
+
+    if (gainMultiplier * peak > 1.0) {
+      gainMultiplier = 1.0 / peak;
+    }
+
+    return gainMultiplier;
+  }
+
+  private applyElementVolume(): void {
+    if (this.backgroundSafeMode) {
+      const volume = Math.max(0, Math.min(1, this.currentVolume * this.currentReplayGainMultiplier));
+      this.getActiveAudio().volume = volume;
+      this.getInactiveAudio().volume = Math.max(0, Math.min(1, this.currentVolume));
+    } else {
+      this.getActiveAudio().volume = 1;
+      this.getInactiveAudio().volume = 1;
+    }
+
+    if (this.radioAudio) {
+      this.radioAudio.volume = Math.max(0, Math.min(1, this.currentVolume));
+    }
+  }
+
+  private configureAudioSession(): void {
+    if (typeof navigator === 'undefined') return;
+
+    const audioSessionNavigator = navigator as Navigator & {
+      audioSession?: { type?: string };
+    };
+
+    try {
+      if (audioSessionNavigator.audioSession) {
+        audioSessionNavigator.audioSession.type = 'playback';
+      }
+    } catch {
+      // Ignore audio-session configuration failures on unsupported browsers.
+    }
+  }
+
+  private recoverPlaybackAfterForeground(): void {
+    if (this.radioAudio && usePlayerStore.getState().radioPlaying && this.radioAudio.paused) {
+      this.radioAudio.play().catch(() => { /* ignore */ });
+      return;
+    }
+
+    if (!usePlayerStore.getState().isPlaying || !this.hasSource()) return;
+
+    if (this.audioContext?.state === 'suspended') {
+      this.audioContext.resume().catch(() => { /* ignore */ });
+    }
+
+    const audio = this.getActiveAudio();
+    if (audio.paused) {
+      audio.play().catch(() => { /* ignore */ });
     }
   }
 }
