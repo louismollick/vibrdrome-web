@@ -382,7 +382,7 @@ export default function SettingsScreen() {
               Storage
             </h2>
             <div className="rounded-lg bg-bg-secondary p-4">
-              <div className="flex items-center justify-between pb-3">
+              <div className="flex items-center justify-between gap-3 pb-3">
                 <div>
                   <span className="text-sm text-text-primary">Sync Offline Library</span>
                   <p className="text-xs text-text-muted">Automatically download missing songs and remove songs deleted from this server</p>
@@ -402,7 +402,7 @@ export default function SettingsScreen() {
                   role="switch"
                   aria-checked={libraryAutoSyncEnabled}
                   onClick={() => setLibraryAutoSyncEnabled(!libraryAutoSyncEnabled)}
-                  className={`relative h-6 w-11 rounded-full transition-colors ${
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
                     libraryAutoSyncEnabled ? 'bg-accent' : 'bg-bg-tertiary'
                   }`}
                 >
