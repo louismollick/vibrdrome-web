@@ -1,8 +1,38 @@
-const SHELL_CACHE = 'vibrdrome-shell-v2';
+const SHELL_CACHE = 'vibrdrome-shell-v3';
+const STATIC_CACHE = 'vibrdrome-static-v1';
 const AUDIO_CACHE = 'vibrdrome-audio-v1';
 const ART_CACHE = 'vibrdrome-art-v1';
-const SHELL_URLS = ['/', '/index.html'];
+const APP_SHELL_URL = '/index.html';
+const SHELL_URLS = [APP_SHELL_URL, '/manifest.json', '/favicon.svg', '/icons/icon.svg'];
 const MAX_AUDIO_CACHE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+const STATIC_DESTINATIONS = new Set(['script', 'style', 'font', 'worker', 'image']);
+
+function isCacheableStaticAsset(request, url) {
+  if (request.method !== 'GET') return false;
+
+  if (url.origin === self.location.origin) {
+    return (
+      STATIC_DESTINATIONS.has(request.destination) ||
+      url.pathname.startsWith('/assets/') ||
+      url.pathname.startsWith('/icons/') ||
+      url.pathname === '/manifest.json' ||
+      url.pathname === '/favicon.svg'
+    );
+  }
+
+  return (
+    url.origin === 'https://fonts.googleapis.com' ||
+    url.origin === 'https://fonts.gstatic.com'
+  );
+}
+
+async function cacheStaticResponse(request, response) {
+  if (!response || !response.ok) return response;
+
+  const cache = await caches.open(STATIC_CACHE);
+  cache.put(request, response.clone());
+  return response;
+}
 
 function buildAudioCacheKey(requestUrl) {
   const url = new URL(requestUrl);
@@ -20,13 +50,16 @@ function buildAudioCacheKey(requestUrl) {
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS))
+    (async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      await cache.addAll(SHELL_URLS);
+    })()
   );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-  const keepCaches = [SHELL_CACHE, AUDIO_CACHE, ART_CACHE];
+  const keepCaches = [SHELL_CACHE, STATIC_CACHE, AUDIO_CACHE, ART_CACHE];
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => !keepCaches.includes(k)).map((k) => caches.delete(k)))
@@ -38,10 +71,46 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // App shell — network first, fallback to cache
+  // App shell — serve index.html for all SPA navigations to avoid redirect responses.
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match('/index.html'))
+      (async () => {
+        const shellRequest = new Request(APP_SHELL_URL, { cache: 'no-store' });
+        const shellCache = await caches.open(SHELL_CACHE);
+        const cachedShell = await shellCache.match(APP_SHELL_URL);
+
+        try {
+          const response = await fetch(shellRequest);
+          if (response.ok && !response.redirected) {
+            shellCache.put(APP_SHELL_URL, response.clone());
+          }
+          return response;
+        } catch {
+          if (cachedShell) return cachedShell;
+          return Response.error();
+        }
+      })()
+    );
+    return;
+  }
+
+  // Built app assets and fonts — stale while revalidate for offline reload support.
+  if (isCacheableStaticAsset(event.request, url)) {
+    event.respondWith(
+      (async () => {
+        const cached = await caches.match(event.request);
+        const networkFetch = fetch(event.request)
+          .then((response) => cacheStaticResponse(event.request, response))
+          .catch(() => null);
+
+        if (cached) {
+          event.waitUntil(networkFetch);
+          return cached;
+        }
+
+        const networkResponse = await networkFetch;
+        return networkResponse || Response.error();
+      })()
     );
     return;
   }
