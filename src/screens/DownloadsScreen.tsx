@@ -101,14 +101,17 @@ export default function DownloadsScreen() {
                     </div>
                     <div className="ml-10 space-y-0.5">
                       {songs.map((song) => (
-                        <div key={song.songId} className="flex items-center justify-between py-1">
+                        <div key={song.cacheId} className="flex items-center justify-between py-1">
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs text-text-secondary">{song.title}</p>
+                            {song.serverName && (
+                              <p className="truncate text-[10px] text-text-muted">{song.serverName}</p>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-text-muted">{formatBytes(song.size)}</span>
                             <button
-                              onClick={() => removeFromCache(song.songId)}
+                              onClick={() => void removeFromCache(song.cacheId)}
                               className="flex h-6 w-6 items-center justify-center rounded-full text-text-muted hover:bg-bg-tertiary hover:text-red-400"
                               aria-label="Remove"
                             >

@@ -11,6 +11,7 @@ const NOTIFICATIONS_KEY = 'vibrdrome_notifications';
 const SLEEP_FADE_KEY = 'vibrdrome_sleep_fade_duration';
 const REPLAYGAIN_MODE_KEY = 'vibrdrome_replaygain_mode';
 const QUEUE_SYNC_KEY = 'vibrdrome_queue_sync';
+const LIBRARY_AUTO_SYNC_KEY = 'vibrdrome_library_auto_sync';
 const DEFAULT_ACCENT = '#8b5cf6';
 
 type Theme = 'system' | 'dark' | 'light' | 'apple' | 'apple-dark' | 'retro' | 'terminal' | 'midnight' | 'sunset';
@@ -51,6 +52,9 @@ interface UIState {
 
   queueSyncEnabled: boolean;
   setQueueSyncEnabled: (value: boolean) => void;
+
+  libraryAutoSyncEnabled: boolean;
+  setLibraryAutoSyncEnabled: (value: boolean) => void;
 
   castConnected: boolean;
   setCastConnected: (connected: boolean) => void;
@@ -179,6 +183,13 @@ export const useUIStore = create<UIState>((set) => ({
   setQueueSyncEnabled: (value) => {
     try { localStorage.setItem(QUEUE_SYNC_KEY, String(value)); } catch { /* ignore */ }
     set({ queueSyncEnabled: value });
+  },
+
+  libraryAutoSyncEnabled: loadBool(LIBRARY_AUTO_SYNC_KEY, false),
+
+  setLibraryAutoSyncEnabled: (value) => {
+    try { localStorage.setItem(LIBRARY_AUTO_SYNC_KEY, String(value)); } catch { /* ignore */ }
+    set({ libraryAutoSyncEnabled: value });
   },
 
   castConnected: false,

@@ -4,6 +4,20 @@ const ART_CACHE = 'vibrdrome-art-v1';
 const SHELL_URLS = ['/', '/index.html'];
 const MAX_AUDIO_CACHE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 
+function buildAudioCacheKey(requestUrl) {
+  const url = new URL(requestUrl);
+  const songId = url.searchParams.get('id');
+  const username = url.searchParams.get('u');
+  if (!songId || !username) return null;
+
+  const params = new URLSearchParams({
+    server: url.origin,
+    user: username,
+    id: songId,
+  });
+  return `${self.location.origin}/__offline_audio__?${params.toString()}`;
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS))
@@ -35,10 +49,15 @@ self.addEventListener('fetch', (event) => {
   // Audio streams — cache first if available (for offline playback)
   if (url.pathname.includes('/rest/stream')) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
-        if (cached) return cached;
+      (async () => {
+        const cacheKey = buildAudioCacheKey(event.request.url);
+        if (cacheKey) {
+          const cache = await caches.open(AUDIO_CACHE);
+          const cached = await cache.match(new Request(cacheKey));
+          if (cached) return cached;
+        }
         return fetch(event.request);
-      })
+      })()
     );
     return;
   }

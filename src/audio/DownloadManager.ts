@@ -3,7 +3,6 @@
  * Sends tracks to the service worker cache one at a time.
  */
 
-import { getSubsonicClient } from '../api/SubsonicClient';
 import { useDownloadStore } from '../stores/downloadStore';
 import type { Song } from '../types/subsonic';
 
@@ -31,25 +30,22 @@ class DownloadManager {
       const next = queue.find((q) => q.status === 'pending');
       if (!next) break;
 
-      await this.downloadTrack(next.song);
+      await this.downloadTrack(next.cacheId);
     }
 
     this.processing = false;
     useDownloadStore.getState().setDownloading(false);
   }
 
-  private async downloadTrack(song: Song): Promise<void> {
+  private async downloadTrack(cacheId: string): Promise<void> {
     const store = useDownloadStore.getState();
-    store.updateProgress(song.id, 0);
+    const item = store.queue.find((entry) => entry.cacheId === cacheId);
+    if (!item) return;
+
+    store.updateProgress(cacheId, 0);
 
     try {
-      const client = getSubsonicClient();
-      const { useUIStore } = await import('../stores/uiStore');
-      const quality = useUIStore.getState().streamQuality;
-      const url = client.stream(song.id, quality || undefined);
-
-      // Fetch the audio to measure size and cache it
-      const response = await fetch(url);
+      const response = await fetch(item.downloadUrl);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -72,24 +68,22 @@ class DownloadManager {
         received += value.length;
 
         if (contentLength > 0) {
-          useDownloadStore.getState().updateProgress(song.id, received / contentLength);
+          useDownloadStore.getState().updateProgress(cacheId, received / contentLength);
         }
       }
 
-      // Reconstruct the response and cache it via SW
       const blob = new Blob(chunks);
       const cacheResponse = new Response(blob, {
         headers: response.headers,
       });
 
-      // Put directly in the cache
       const cache = await caches.open('vibrdrome-audio-v1');
-      await cache.put(new Request(url), cacheResponse);
+      await cache.put(new Request(item.cacheKey), cacheResponse);
 
-      useDownloadStore.getState().markDone(song.id, received);
+      useDownloadStore.getState().markDone(cacheId, received);
     } catch (err) {
-      console.error(`[DownloadManager] Failed to download ${song.title}:`, err);
-      useDownloadStore.getState().markError(song.id);
+      console.error(`[DownloadManager] Failed to download ${item.song.title}:`, err);
+      useDownloadStore.getState().markError(cacheId);
     }
   }
 }

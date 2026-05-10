@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, Component } from 'react';
+import React, { Suspense, useEffect, Component, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './stores/authStore';
@@ -13,6 +13,7 @@ import ShortcutsOverlay from './components/common/ShortcutsOverlay';
 import RightPane from './components/player/RightPane';
 import PopOutPlayer from './components/player/PopOutPlayer';
 import { useDownloadStore } from './stores/downloadStore';
+import { getLibrarySyncManager } from './audio/LibrarySyncManager';
 
 // Error boundary for stale chunk errors after deploys
 class ChunkErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -91,11 +92,13 @@ const HIDE_MINIPLAYER_ROUTES = ['/now-playing', '/visualizer', '/login'];
 const HIDE_SIDEBAR_ROUTES = ['/login', '/now-playing', '/visualizer'];
 
 export default function App() {
-  const { isAuthenticated, loadFromStorage } = useAuthStore();
+  const { isAuthenticated, activeServerId, loadFromStorage } = useAuthStore();
   const theme = useUIStore((s) => s.theme);
   const accentColor = useUIStore((s) => s.accentColor);
+  const libraryAutoSyncEnabled = useUIStore((s) => s.libraryAutoSyncEnabled);
   const currentSong = usePlayerStore((s) => s.currentSong);
   const location = useLocation();
+  const previousServerId = useRef<string | null>(null);
 
   // Initialize playback engine
   usePlayback();
@@ -103,8 +106,49 @@ export default function App() {
   // Load auth state and cached downloads on mount
   useEffect(() => {
     loadFromStorage();
-    useDownloadStore.getState().loadCachedSongs();
+    void useDownloadStore.getState().loadCachedSongs();
   }, [loadFromStorage]);
+
+  useEffect(() => {
+    const manager = getLibrarySyncManager();
+
+    if (!isAuthenticated || !activeServerId) {
+      manager.stop();
+      previousServerId.current = activeServerId;
+      return;
+    }
+
+    if (!libraryAutoSyncEnabled) {
+      manager.stop();
+      previousServerId.current = activeServerId;
+      return;
+    }
+
+    const serverChanged = previousServerId.current !== null && previousServerId.current !== activeServerId;
+    manager.trigger(serverChanged ? 'server-switch' : 'startup', {
+      force: true,
+      interrupt: serverChanged,
+    });
+    previousServerId.current = activeServerId;
+  }, [isAuthenticated, activeServerId, libraryAutoSyncEnabled]);
+
+  useEffect(() => {
+    const manager = getLibrarySyncManager();
+
+    const handleOnline = () => manager.trigger('online');
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        manager.trigger('visibility');
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
 
   // Apply theme to html element
   useEffect(() => {
