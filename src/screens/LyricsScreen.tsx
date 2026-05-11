@@ -47,7 +47,7 @@ function getCurrentLineIndex(lines: LyricLine[], positionMs: number): number {
 
 function getSyncedLineClass(index: number, currentIdx: number) {
   if (index === currentIdx) {
-    return 'scale-105 text-xl font-bold text-accent';
+    return 'origin-left scale-105 text-xl font-bold text-accent';
   }
 
   if (index < currentIdx) {
@@ -319,9 +319,9 @@ export default function LyricsScreen() {
             key={`${lineIndex}-${tokenIndex}-${token.text}`}
             type="button"
             onClick={() => setOverlayState({ lineIndex, tokenIndex, sessionKey: overlaySessionKey })}
-            className={`relative inline-block rounded-sm px-px transition-colors after:pointer-events-none after:absolute after:right-px after:bottom-[0.1em] after:left-px after:h-px after:rounded-full after:content-[''] ${
+            className={`relative inline-block rounded-sm px-1 transition-colors after:pointer-events-none after:absolute after:right-px after:bottom-[0.1em] after:left-px after:h-px after:rounded-full after:content-[''] ${
               selected
-                ? 'text-accent after:bg-accent'
+                ? 'bg-text-primary/12 text-text-primary after:bg-text-primary'
                 : 'after:bg-accent/70 hover:text-accent hover:after:bg-accent'
             }`}
           >
