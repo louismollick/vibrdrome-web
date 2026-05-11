@@ -15,6 +15,12 @@ describe('libraryStore', () => {
       expect(pills.find((p) => p.id === 'artists')).toBeDefined();
     });
 
+    it('shows downloads in the default shortcuts', () => {
+      const downloads = useLibraryStore.getState().pills.find((p) => p.id === 'downloads');
+      expect(downloads).toBeDefined();
+      expect(downloads?.visible).toBe(true);
+    });
+
     it('toggles pill visibility', () => {
       const before = useLibraryStore.getState().pills.find((p) => p.id === 'genres')?.visible;
       useLibraryStore.getState().togglePill('genres');
