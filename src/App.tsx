@@ -12,6 +12,7 @@ import CommandPalette from './components/common/CommandPalette';
 import ShortcutsOverlay from './components/common/ShortcutsOverlay';
 import RightPane from './components/player/RightPane';
 import PopOutPlayer from './components/player/PopOutPlayer';
+import MiniPlayer from './components/player/MiniPlayer';
 import { useDownloadStore } from './stores/downloadStore';
 import { getLibrarySyncManager } from './audio/LibrarySyncManager';
 import LibraryScreen from './screens/LibraryScreen';
@@ -104,8 +105,6 @@ const LyricsScreen = lazyWithRetry(() => import('./screens/LyricsScreen'));
 const EQScreen = lazyWithRetry(() => import('./screens/EQScreen'));
 const VisualizerScreen = lazyWithRetry(() => import('./screens/VisualizerScreen'));
 const ShareScreen = lazyWithRetry(() => import('./screens/ShareScreen'));
-
-const MiniPlayer = lazyWithRetry(() => import('./components/player/MiniPlayer'));
 
 const HIDE_MINIPLAYER_ROUTES = ['/now-playing', '/visualizer', '/login'];
 const HIDE_SIDEBAR_ROUTES = ['/login', '/now-playing', '/visualizer'];
@@ -352,9 +351,7 @@ export default function App() {
       </div>
 
       {showMiniPlayer && (
-        <Suspense fallback={null}>
-          <MiniPlayer />
-        </Suspense>
+        <MiniPlayer />
       )}
 
       {popOutPlayerOpen && hasPlayback && (
