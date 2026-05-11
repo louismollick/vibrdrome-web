@@ -2,6 +2,8 @@ import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../stores/playerStore';
 import { getPlaybackManager } from '../../audio/PlaybackManager';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { getOfflineMessage } from '../../utils/offlineCapability';
 import DynamicBackground from './DynamicBackground';
 import SpinningAlbumArt from './SpinningAlbumArt';
 import NowPlayingQueue from './NowPlayingQueue';
@@ -20,6 +22,8 @@ type RightTab = 'queue' | 'lyrics' | 'artist';
 
 export default function DesktopNowPlaying() {
   const navigate = useNavigate();
+  const isOnline = useOnlineStatus();
+  const visualizerOfflineMessage = getOfflineMessage('visualizer');
   const {
     currentSong, isPlaying, positionMs, durationMs,
     shuffleEnabled, repeatMode, playbackSpeed,
@@ -58,7 +62,13 @@ export default function DesktopNowPlaying() {
         </button>
         <span className="text-xs font-medium uppercase tracking-widest text-white/40">Now Playing</span>
         <div className="flex items-center gap-1">
-          <button onClick={() => navigate('/visualizer')} className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 hover:bg-white/10" aria-label="Visualizer">
+          <button
+            onClick={() => navigate('/visualizer')}
+            disabled={!isOnline}
+            title={!isOnline ? visualizerOfflineMessage.title : undefined}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Visualizer"
+          >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
               <path strokeLinecap="round" d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h2" />
             </svg>

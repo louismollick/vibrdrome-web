@@ -266,6 +266,8 @@ export default function LibraryScreen() {
   const radioOfflineMessage = getOfflineMessage('radio');
   const playlistsOfflineMessage = getOfflineMessage('playlists');
   const foldersOfflineMessage = getOfflineMessage('folders');
+  const generationsOfflineMessage = getOfflineMessage('/generations');
+  const smartPlaylistsOfflineMessage = getOfflineMessage('/smart-playlists');
   const randomMixOfflineMessage = getOfflineMessage('randomMix');
   const randomAlbumOfflineMessage = getOfflineMessage('randomAlbum');
 
@@ -303,9 +305,11 @@ export default function LibraryScreen() {
   };
 
   const pillDisabledReasons: Partial<Record<string, string>> = !isOnline ? {
+    generations: generationsOfflineMessage.title,
     radio: radioOfflineMessage.title,
     folders: foldersOfflineMessage.title,
     playlists: playlistsOfflineMessage.title,
+    smartPlaylists: smartPlaylistsOfflineMessage.title,
     randomMix: offlineLibrary.songs.length === 0 ? randomMixOfflineMessage.title : undefined,
     randomAlbum: offlineLibrary.albums.length === 0 ? randomAlbumOfflineMessage.title : undefined,
   } : {};

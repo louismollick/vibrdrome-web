@@ -8,13 +8,13 @@ import LoadingSpinner from './components/common/LoadingSpinner';
 import Sidebar from './components/common/Sidebar';
 import { usePlayback } from './audio/usePlayback';
 import { darkenHex } from './utils/color';
-import { getOfflineMessage } from './utils/offlineCapability';
+import { getOfflineMessage, getOfflineRouteTitle } from './utils/offlineCapability';
 import CommandPalette from './components/common/CommandPalette';
 import ShortcutsOverlay from './components/common/ShortcutsOverlay';
 import RightPane from './components/player/RightPane';
 import PopOutPlayer from './components/player/PopOutPlayer';
 import MiniPlayer from './components/player/MiniPlayer';
-import StateMessage from './components/common/StateMessage';
+import OfflineUnavailableScreen from './components/common/OfflineUnavailableScreen';
 import { useDownloadStore } from './stores/downloadStore';
 import { getLibrarySyncManager } from './audio/LibrarySyncManager';
 import LibraryScreen from './screens/LibraryScreen';
@@ -67,18 +67,26 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode; pathname: stri
             body: 'Reload to update the app shell and screen bundles.',
           };
 
+      if (offline) {
+        return (
+          <OfflineUnavailableScreen
+            screenTitle={getOfflineRouteTitle(this.props.pathname)}
+            title={message.title}
+            body={message.body}
+          />
+        );
+      }
+
       return (
         <div className="flex min-h-dvh flex-col items-center justify-center bg-bg-primary px-4 text-center">
           <p className="mb-2 text-lg text-text-primary">{message.title}</p>
           <p className="mb-4 max-w-sm text-sm text-text-secondary">{message.body}</p>
-          {!offline && (
-            <button
-              onClick={() => window.location.reload()}
-              className="rounded-lg bg-accent px-6 py-3 font-semibold text-white hover:bg-accent-hover"
-            >
-              Reload
-            </button>
-          )}
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-lg bg-accent px-6 py-3 font-semibold text-white hover:bg-accent-hover"
+          >
+            Reload
+          </button>
         </div>
       );
     }
@@ -121,20 +129,18 @@ const HIDE_SIDEBAR_ROUTES = ['/login', '/now-playing', '/visualizer'];
 
 function OfflineLazyRoute({
   pathname,
+  title,
   children,
 }: {
   pathname: string;
+  title: string;
   children: ReactNode;
 }) {
   const isOnline = useOnlineStatus();
 
   if (!isOnline) {
     const message = getOfflineMessage(pathname);
-    return (
-      <div className="flex min-h-full items-center justify-center bg-bg-primary">
-        <StateMessage title={message.title} body={message.body} />
-      </div>
-    );
+    return <OfflineUnavailableScreen screenTitle={title} title={message.title} body={message.body} />;
   }
 
   return <>{children}</>;
@@ -263,7 +269,7 @@ export default function App() {
             <Route
               path="/share"
               element={(
-                <OfflineLazyRoute pathname="/share">
+                <OfflineLazyRoute pathname="/share" title="Shared Link">
                   <ShareScreen />
                 </OfflineLazyRoute>
               )}
@@ -301,7 +307,7 @@ export default function App() {
             <Route
               path="/generations"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/generations">
+                <OfflineLazyRoute pathname="/generations" title="Generations">
                   <GenerationsScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -313,7 +319,7 @@ export default function App() {
             <Route
               path="/folders"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/folders">
+                <OfflineLazyRoute pathname="/folders" title="Folders">
                   <FolderBrowserScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -321,7 +327,7 @@ export default function App() {
             <Route
               path="/folder/:folderId"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/folder/:folderId">
+                <OfflineLazyRoute pathname="/folder/:folderId" title="Folder">
                   <FolderDetailScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -329,7 +335,7 @@ export default function App() {
             <Route
               path="/playlists"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/playlists">
+                <OfflineLazyRoute pathname="/playlists" title="Playlists">
                   <PlaylistsScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -337,7 +343,7 @@ export default function App() {
             <Route
               path="/playlist/:playlistId"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/playlist/:playlistId">
+                <OfflineLazyRoute pathname="/playlist/:playlistId" title="Playlist">
                   <PlaylistDetailScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -345,7 +351,7 @@ export default function App() {
             <Route
               path="/playlist/edit/:playlistId?"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/playlist/edit/:playlistId?">
+                <OfflineLazyRoute pathname="/playlist/edit/:playlistId?" title="Edit Playlist">
                   <PlaylistEditorScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -353,7 +359,7 @@ export default function App() {
             <Route
               path="/smart-playlists"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/smart-playlists">
+                <OfflineLazyRoute pathname="/smart-playlists" title="Smart Playlists">
                   <SmartPlaylistScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -361,7 +367,7 @@ export default function App() {
             <Route
               path="/radio"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/radio">
+                <OfflineLazyRoute pathname="/radio" title="Radio">
                   <RadioScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -369,7 +375,7 @@ export default function App() {
             <Route
               path="/radio/search"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/radio/search">
+                <OfflineLazyRoute pathname="/radio/search" title="Search Stations">
                   <StationSearchScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -377,7 +383,7 @@ export default function App() {
             <Route
               path="/radio/add"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/radio/add">
+                <OfflineLazyRoute pathname="/radio/add" title="Add Station">
                   <AddStationScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -393,7 +399,7 @@ export default function App() {
             <Route
               path="/settings/servers"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/settings/servers">
+                <OfflineLazyRoute pathname="/settings/servers" title="Manage Servers">
                   <ServerManagerScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}
@@ -421,7 +427,7 @@ export default function App() {
             <Route
               path="/visualizer"
               element={isAuthenticated ? (
-                <OfflineLazyRoute pathname="/visualizer">
+                <OfflineLazyRoute pathname="/visualizer" title="Visualizer">
                   <VisualizerScreen />
                 </OfflineLazyRoute>
               ) : <Navigate to="/login" replace />}

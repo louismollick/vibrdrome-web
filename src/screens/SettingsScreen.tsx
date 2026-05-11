@@ -5,6 +5,8 @@ import { useUIStore } from '../stores/uiStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useEQStore } from '../stores/eqStore';
 import { isValidHex } from '../utils/color';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { getOfflineMessage } from '../utils/offlineCapability';
 import { exportSettings, importSettings } from '../utils/settingsIO';
 import { Header } from '../components/common';
 import ThemePicker from '../components/settings/ThemePicker';
@@ -18,6 +20,8 @@ export default function SettingsScreen() {
   const { sleepFadeDuration, setSleepFadeDuration, notificationsEnabled, setNotificationsEnabled, replayGainMode, setReplayGainMode, queueSyncEnabled, setQueueSyncEnabled, libraryAutoSyncEnabled, setLibraryAutoSyncEnabled } = useUIStore();
   const { isLibrarySyncing, lastLibrarySyncAt, librarySyncError } = useDownloadStore();
   const eqEnabled = useEQStore((s) => s.enabled);
+  const isOnline = useOnlineStatus();
+  const serverManagerOfflineMessage = getOfflineMessage('serverManager');
 
   const activeServer = servers.find((s) => s.id === activeServerId);
 
@@ -62,7 +66,9 @@ export default function SettingsScreen() {
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={() => navigate('/settings/servers')}
-                  className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-tertiary"
+                  disabled={!isOnline}
+                  title={!isOnline ? serverManagerOfflineMessage.title : undefined}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Manage Servers
                 </button>

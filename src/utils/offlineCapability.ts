@@ -17,6 +17,11 @@ interface OfflineMessage {
   body: string;
 }
 
+interface OfflineRouteTitleRule {
+  patterns: string[];
+  title: string;
+}
+
 interface OfflineRouteRule {
   patterns: string[];
   supported: boolean;
@@ -125,6 +130,22 @@ const OFFLINE_FEATURE_MESSAGES: Record<OfflineFeatureId, OfflineMessage> = {
   },
 };
 
+const OFFLINE_ROUTE_TITLES: OfflineRouteTitleRule[] = [
+  { patterns: ['/generations'], title: 'Generations' },
+  { patterns: ['/folders'], title: 'Folders' },
+  { patterns: ['/folder/:folderId'], title: 'Folder' },
+  { patterns: ['/playlists'], title: 'Playlists' },
+  { patterns: ['/playlist/:playlistId'], title: 'Playlist' },
+  { patterns: ['/playlist/edit/:playlistId?'], title: 'Edit Playlist' },
+  { patterns: ['/smart-playlists'], title: 'Smart Playlists' },
+  { patterns: ['/radio'], title: 'Radio' },
+  { patterns: ['/radio/search'], title: 'Search Stations' },
+  { patterns: ['/radio/add'], title: 'Add Station' },
+  { patterns: ['/settings/servers'], title: 'Manage Servers' },
+  { patterns: ['/share'], title: 'Shared Link' },
+  { patterns: ['/visualizer'], title: 'Visualizer' },
+];
+
 function stripQueryAndHash(pathname: string) {
   return pathname.split('?')[0].split('#')[0];
 }
@@ -158,6 +179,10 @@ function getOfflineRouteRule(pathname: string) {
 
 export function isOfflineSupportedRoute(pathname: string) {
   return getOfflineRouteRule(pathname)?.supported ?? false;
+}
+
+export function getOfflineRouteTitle(pathname: string) {
+  return OFFLINE_ROUTE_TITLES.find((rule) => rule.patterns.some((pattern) => matchesPattern(pathname, pattern)))?.title ?? 'Unavailable Offline';
 }
 
 export function isOfflineUnsupportedFeature(id: OfflineFeatureId) {

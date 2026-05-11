@@ -1,6 +1,8 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { getSubsonicClient } from '../../api/SubsonicClient';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { getOfflineMessage, isOfflineSupportedRoute } from '../../utils/offlineCapability';
 import FolderPicker from './FolderPicker';
 import FirstRunTooltip from './FirstRunTooltip';
 
@@ -25,8 +27,12 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const isOnline = useOnlineStatus();
+  const displayCounts = isOnline ? counts : {};
 
   useEffect(() => {
+    if (!isOnline) return;
+
     const client = getSubsonicClient();
     if (!client.isConfigured()) return;
 
@@ -46,7 +52,7 @@ export default function Sidebar() {
       for (const r of results) Object.assign(merged, r);
       setCounts(merged);
     });
-  }, []);
+  }, [isOnline]);
 
   return (
     <aside className="hidden md:flex md:w-56 lg:w-64 flex-col border-r border-border bg-bg-secondary">
@@ -63,16 +69,20 @@ export default function Sidebar() {
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
         {NAV_ITEMS.map((item) => {
           const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path.split('?')[0]));
-          const count = counts[item.label];
+          const count = displayCounts[item.label];
+          const disabled = !isOnline && !isOfflineSupportedRoute(item.path);
+          const disabledReason = disabled ? getOfflineMessage(item.path).title : undefined;
           return (
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
+              disabled={disabled}
+              title={disabledReason}
               className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                 isActive
                   ? 'bg-accent/10 text-accent font-medium'
                   : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-secondary`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5 shrink-0">
                 <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
@@ -90,15 +100,19 @@ export default function Sidebar() {
       <div className="border-t border-border px-3 py-3 space-y-0.5">
         {BOTTOM_ITEMS.map((item) => {
           const isActive = location.pathname.startsWith(item.path);
+          const disabled = !isOnline && !isOfflineSupportedRoute(item.path);
+          const disabledReason = disabled ? getOfflineMessage(item.path).title : undefined;
           return (
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
+              disabled={disabled}
+              title={disabledReason}
               className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                 isActive
                   ? 'bg-accent/10 text-accent font-medium'
                   : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-secondary`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5 shrink-0">
                 <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
