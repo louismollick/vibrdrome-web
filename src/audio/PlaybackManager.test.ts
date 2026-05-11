@@ -36,6 +36,16 @@ const mediaSession = {
 };
 
 type PlaybackManagerTestAccess = {
+  activePlayer: 'A' | 'B';
+  playerA: HTMLAudioElement;
+  playerB: HTMLAudioElement;
+  play: (song: {
+    id: string;
+    title: string;
+    artist?: string;
+    album?: string;
+    coverArt?: string;
+  }) => Promise<void>;
   updateMediaSession: (song: {
     id: string;
     title: string;
@@ -182,5 +192,54 @@ describe('PlaybackManager cast integration', () => {
     expect(mediaSession.setActionHandler).toHaveBeenCalledWith('pause', expect.any(Function));
     expect(mediaSession.setActionHandler).toHaveBeenCalledWith('nexttrack', null);
     expect(mediaSession.setActionHandler).toHaveBeenCalledWith('seekto', null);
+  });
+
+  it('stages iOS background track changes on the inactive player and swaps after play starts', async () => {
+    const userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
+    const platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
+    const touchDescriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints');
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+    });
+    Object.defineProperty(navigator, 'platform', {
+      configurable: true,
+      value: 'iPhone',
+    });
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      configurable: true,
+      value: 5,
+    });
+
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+
+    try {
+      const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
+      pm.playerA.src = 'https://example.test/stream/original';
+      pm.activePlayer = 'A';
+
+      await pm.play({
+        id: 'song-2',
+        title: 'Next Track',
+        artist: 'Artist',
+        album: 'Album',
+      });
+
+      expect(pm.activePlayer).toBe('B');
+      expect(pm.playerB.src).toContain('/stream/song-2');
+      expect(pm.playerA.src).toBe(window.location.href);
+      expect(playSpy).toHaveBeenCalled();
+      expect(pauseSpy).toHaveBeenCalled();
+      expect(loadSpy).toHaveBeenCalled();
+    } finally {
+      playSpy.mockRestore();
+      pauseSpy.mockRestore();
+      loadSpy.mockRestore();
+      if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
+      if (platformDescriptor) Object.defineProperty(navigator, 'platform', platformDescriptor);
+      if (touchDescriptor) Object.defineProperty(navigator, 'maxTouchPoints', touchDescriptor);
+    }
   });
 });
