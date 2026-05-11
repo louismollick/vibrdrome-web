@@ -59,12 +59,57 @@ function buildCoverArtCacheKey(requestUrl) {
   });
 
   const username = url.searchParams.get('u');
-  const size = url.searchParams.get('size');
 
+  if (username) params.set('user', username);
+
+  return `${self.location.origin}/__offline_cover_art__?${params.toString()}`;
+}
+
+function buildLegacyCoverArtCacheKey(requestUrl, size) {
+  const url = new URL(requestUrl);
+  const coverArtId = url.searchParams.get('id');
+  if (!coverArtId) return requestUrl;
+
+  const params = new URLSearchParams({
+    server: url.origin,
+    id: coverArtId,
+  });
+
+  const username = url.searchParams.get('u');
   if (username) params.set('user', username);
   if (size) params.set('size', size);
 
   return `${self.location.origin}/__offline_cover_art__?${params.toString()}`;
+}
+
+async function matchLegacyCoverArt(cache, requestUrl) {
+  const requestedUrl = new URL(requestUrl);
+  const requestedSize = requestedUrl.searchParams.get('size');
+  const candidateSizes = [
+    requestedSize,
+    '512',
+    '400',
+    '360',
+    '300',
+    '256',
+    '240',
+    '150',
+    '144',
+    '128',
+    '112',
+    '96',
+    '80',
+    '76',
+    '72',
+    '64',
+  ].filter(Boolean);
+
+  for (const size of candidateSizes) {
+    const cached = await cache.match(new Request(buildLegacyCoverArtCacheKey(requestUrl, size)));
+    if (cached) return cached;
+  }
+
+  return null;
 }
 
 self.addEventListener('install', (event) => {
@@ -158,6 +203,12 @@ self.addEventListener('fetch', (event) => {
         const cache = await caches.open(ART_CACHE);
         const cached = await cache.match(new Request(cacheKey));
         if (cached) return cached;
+
+        const legacyCached = await matchLegacyCoverArt(cache, event.request.url);
+        if (legacyCached) {
+          cache.put(new Request(cacheKey), legacyCached.clone());
+          return legacyCached;
+        }
 
         return fetch(event.request).then((response) => {
           if (response.ok) {

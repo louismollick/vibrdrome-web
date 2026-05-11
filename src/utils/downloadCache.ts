@@ -3,7 +3,7 @@ import type { ServerConfig } from '../types/subsonic';
 export const OFFLINE_AUDIO_PATH = '/__offline_audio__';
 export const AUDIO_CACHE_NAME = 'vibrdrome-audio-v1';
 export const ART_CACHE_NAME = 'vibrdrome-art-v1';
-export const REQUIRED_COVER_ART_SIZES = [76, 150, 300, 512];
+export const OFFLINE_COVER_ART_SIZE = 512;
 
 function normalizeServerOrigin(serverUrl: string): string {
   return new URL(serverUrl).origin;
@@ -38,10 +38,8 @@ export function buildCoverArtCacheKey(coverArtUrl: string): string {
   });
 
   const username = url.searchParams.get('u');
-  const size = url.searchParams.get('size');
 
   if (username) params.set('user', username);
-  if (size) params.set('size', size);
 
   return `${window.location.origin}/__offline_cover_art__?${params.toString()}`;
 }

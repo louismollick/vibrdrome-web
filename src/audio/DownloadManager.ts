@@ -14,7 +14,7 @@ import { putOfflineLyrics } from '../utils/offlineLyricsStore';
 import { getCachedArtist, setCachedArtist } from '../utils/lastfmCache';
 import { resolveArtistImage } from '../utils/artistImageResolver';
 import { extractWaveform } from './waveformExtractor';
-import { AUDIO_CACHE_NAME, ART_CACHE_NAME, REQUIRED_COVER_ART_SIZES, buildCoverArtCacheKey } from '../utils/downloadCache';
+import { AUDIO_CACHE_NAME, ART_CACHE_NAME, OFFLINE_COVER_ART_SIZE, buildCoverArtCacheKey } from '../utils/downloadCache';
 
 const REQUIRED_PROGRESS = {
   coverArt: 0.72,
@@ -124,29 +124,24 @@ class DownloadManager {
     const client = new SubsonicClient();
     client.setConfig(server);
     const cache = await caches.open(ART_CACHE_NAME);
-    const coverArtKeys: string[] = [];
+    const url = client.getCoverArt(item.song.coverArt, OFFLINE_COVER_ART_SIZE);
+    const cacheKey = buildCoverArtCacheKey(url);
 
-    for (const size of REQUIRED_COVER_ART_SIZES) {
-      const url = client.getCoverArt(item.song.coverArt, size);
-      const cacheKey = buildCoverArtCacheKey(url);
-      const cachedRef = await hasArtReference(cacheKey);
-      if (!cachedRef) {
-        const cachedResponse = await cache.match(new Request(cacheKey));
-        if (!cachedResponse) {
-          const response = await fetch(url);
-          if (!response.ok) {
-            throw new Error(`Cover art fetch failed: ${response.status}`);
-          }
-
-          await cache.put(new Request(cacheKey), response.clone());
+    const cachedRef = await hasArtReference(cacheKey);
+    if (!cachedRef) {
+      const cachedResponse = await cache.match(new Request(cacheKey));
+      if (!cachedResponse) {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Cover art fetch failed: ${response.status}`);
         }
-      }
 
-      await addArtReference(cacheKey, item.song.coverArt, item.serverId);
-      coverArtKeys.push(cacheKey);
+        await cache.put(new Request(cacheKey), response.clone());
+      }
     }
 
-    return coverArtKeys;
+    await addArtReference(cacheKey, item.song.coverArt, item.serverId);
+    return [cacheKey];
   }
 
   private async cacheLyrics(item: { serverId: string; song: Song }): Promise<boolean> {

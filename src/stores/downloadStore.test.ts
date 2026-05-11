@@ -174,7 +174,7 @@ describe('downloadStore', () => {
           cachedAt: Date.now(),
           requiredAssetsReady: true,
           lyricsStored: true,
-          coverArtKeys: ['http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice&size=300'],
+          coverArtKeys: ['http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice'],
         }],
       ]),
       totalCachedSize: 123,
@@ -183,10 +183,10 @@ describe('downloadStore', () => {
     await useDownloadStore.getState().removeFromCache('server-1:song-1');
 
     expect(deleteOfflineLyrics).toHaveBeenCalledWith('server-1', 'song-1');
-    expect(removeArtReference).toHaveBeenCalledWith('http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice&size=300');
+    expect(removeArtReference).toHaveBeenCalledWith('http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice');
     expect(postMessage).toHaveBeenCalledWith({
       type: 'REMOVE_CACHED_ART',
-      url: 'http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice&size=300',
+      url: 'http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice',
     });
   });
 
