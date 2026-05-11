@@ -23,6 +23,18 @@ function isIOSWebPlaybackEnvironment(): boolean {
   return /iPad|iPhone|iPod/i.test(userAgent) || touchCapableMac;
 }
 
+function isStandalonePWA(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+
+  const legacyNavigator = navigator as Navigator & { standalone?: boolean };
+  const standaloneByNavigator = legacyNavigator.standalone === true;
+  const standaloneByDisplayMode = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(display-mode: standalone)').matches
+    : false;
+
+  return standaloneByNavigator || standaloneByDisplayMode;
+}
+
 class PlaybackManager {
   private audioContext: AudioContext | null = null;
   private playerA: HTMLAudioElement;
@@ -54,12 +66,17 @@ class PlaybackManager {
   private currentReplayGainMultiplier = 1;
   private positionTimerType: 'raf' | 'interval' | null = null;
   private readonly visibilityHandler = () => {
+    this.debugLog('visibilitychange', {
+      hidden: typeof document !== 'undefined' ? document.hidden : undefined,
+      visibilityState: typeof document !== 'undefined' ? document.visibilityState : undefined,
+    });
     if (typeof document !== 'undefined' && !document.hidden) {
       this.configureAudioSession();
       this.recoverPlaybackAfterForeground();
     }
   };
   private readonly pageShowHandler = () => {
+    this.debugLog('pageshow');
     this.configureAudioSession();
     this.recoverPlaybackAfterForeground();
   };
@@ -105,6 +122,9 @@ class PlaybackManager {
     getCastManager().onSessionEnd((lastPositionMs) => this.handleCastSessionEnded(lastPositionMs));
 
     this.configureAudioSession();
+    this.debugLog('constructed', {
+      backgroundSafeMode: this.backgroundSafeMode,
+    });
 
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.visibilityHandler);
@@ -187,6 +207,16 @@ class PlaybackManager {
       : this.activePlayer;
     const audio = this.getAudioForPlayer(targetPlayer);
 
+    this.debugLog('play:start', {
+      songId: song.id,
+      title: song.title,
+      activePlayer: this.activePlayer,
+      targetPlayer,
+      shouldSwapPlayersForBackgroundTrackChange,
+      currentAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+      targetAudio: this.describeAudio(audio, targetPlayer),
+    });
+
     if (shouldSwapPlayersForBackgroundTrackChange) {
       // iOS background playback is more reliable when the new track is staged
       // on the inactive element and swapped in after playback starts.
@@ -216,6 +246,11 @@ class PlaybackManager {
 
     try {
       await audio.play();
+      this.debugLog('play:resolved', {
+        songId: song.id,
+        targetPlayer,
+        targetAudio: this.describeAudio(audio, targetPlayer),
+      });
     } catch (err) {
       // AbortError is expected when a new play() call interrupts a pending one — ignore it
       if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -226,6 +261,12 @@ class PlaybackManager {
         audio.load();
         this.internalPause = false;
       }
+      this.debugLog('play:rejected', {
+        songId: song.id,
+        targetPlayer,
+        error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
+        targetAudio: this.describeAudio(audio, targetPlayer),
+      });
       console.error('[PlaybackManager] Play error:', err);
       usePlayerStore.getState().setPlaying(false);
       return;
@@ -255,6 +296,11 @@ class PlaybackManager {
         usePlayerStore.getState().setDuration(Math.round(audio.duration * 1000));
       }
       this.applyElementVolume();
+      this.debugLog('play:swapped-active-player', {
+        newActivePlayer: this.activePlayer,
+        activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+        previousAudio: this.describeAudio(previousActiveAudio, this.activePlayer === 'A' ? 'B' : 'A'),
+      });
     }
 
     // Send "now playing" notification so the server shows this session
@@ -286,6 +332,10 @@ class PlaybackManager {
   }
 
   pause(): void {
+    this.debugLog('pause:requested', {
+      currentSongId: usePlayerStore.getState().currentSong?.id,
+      activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+    });
     if (useUIStore.getState().castConnected) {
       getCastManager().pause();
     } else {
@@ -296,23 +346,41 @@ class PlaybackManager {
     this.setMediaSessionPlaybackState('paused');
     this.updateMediaSessionPosition();
     this.stopPositionTracking();
+    this.debugLog('pause:completed', {
+      activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+    });
   }
 
   async resume(): Promise<void> {
+    this.debugLog('resume:requested', {
+      currentSongId: usePlayerStore.getState().currentSong?.id,
+      activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+    });
     if (useUIStore.getState().castConnected) {
       getCastManager().play();
       this.setMediaSessionPlaybackState('playing');
       this.startPositionTracking();
+      this.debugLog('resume:cast');
       return;
     }
     this.configureAudioSession();
     this.applyElementVolume();
     if (this.audioContext?.state === 'suspended') {
       await this.audioContext.resume();
+      this.debugLog('resume:audio-context-resumed', {
+        audioContextState: this.audioContext.state,
+      });
     }
     try {
       await this.getActiveAudio().play();
+      this.debugLog('resume:resolved', {
+        activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+      });
     } catch (err) {
+      this.debugLog('resume:rejected', {
+        error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
+        activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+      });
       console.error('[PlaybackManager] Resume error:', err);
     }
     this.setMediaSessionPlaybackState('playing');
@@ -933,10 +1001,18 @@ class PlaybackManager {
     });
 
     this.setMediaSessionActionHandler('play', () => {
+      this.debugLog('media-session:play', {
+        activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+      });
+      void this.resume();
       usePlayerStore.getState().setPlaying(true);
     });
 
     this.setMediaSessionActionHandler('pause', () => {
+      this.debugLog('media-session:pause', {
+        activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+      });
+      this.pause();
       usePlayerStore.getState().setPlaying(false);
     });
 
@@ -1132,6 +1208,10 @@ class PlaybackManager {
     // Ignore errors from empty/cleared sources
     const audio = player === 'A' ? this.playerA : this.playerB;
     if (!audio.src || audio.src === window.location.href) return;
+    this.debugLog('audio:error', {
+      player,
+      audio: this.describeAudio(audio, player),
+    });
     console.error(`[PlaybackManager] Audio error on player ${player}`);
     usePlayerStore.getState().setPlaying(false);
   }
@@ -1141,6 +1221,11 @@ class PlaybackManager {
     const audio = player === 'A' ? this.playerA : this.playerB;
     // Ignore pauses caused by clearing src or by the natural end-of-track
     if (!audio.src || audio.src === window.location.href || audio.ended) return;
+    this.debugLog('audio:external-pause', {
+      player,
+      audio: this.describeAudio(audio, player),
+      storeIsPlaying: usePlayerStore.getState().isPlaying,
+    });
     // If the store thinks we're still playing, the pause came from outside
     // (OS focus loss, Bluetooth dropout, buffer underrun). Reflect it in UI.
     if (usePlayerStore.getState().isPlaying) {
@@ -1236,8 +1321,50 @@ class PlaybackManager {
 
   private handlePlaying(player: 'A' | 'B'): void {
     if (player !== this.activePlayer) return;
+    this.debugLog('audio:playing', {
+      player,
+      audio: this.describeAudio(this.getActiveAudio(), player),
+    });
     this.setMediaSessionPlaybackState('playing');
     this.updateMediaSessionPosition();
+  }
+
+  private describeAudio(
+    audio: HTMLAudioElement | null,
+    player?: 'A' | 'B',
+  ): Record<string, unknown> | null {
+    if (!audio) return null;
+
+    return {
+      player,
+      paused: audio.paused,
+      ended: audio.ended,
+      currentTime: Number.isFinite(audio.currentTime) ? Number(audio.currentTime.toFixed(3)) : audio.currentTime,
+      duration: Number.isFinite(audio.duration) ? Number(audio.duration.toFixed(3)) : audio.duration,
+      readyState: audio.readyState,
+      networkState: audio.networkState,
+      playbackRate: audio.playbackRate,
+      volume: audio.volume,
+      muted: audio.muted,
+      src: audio.src || null,
+    };
+  }
+
+  private debugLog(event: string, extra: Record<string, unknown> = {}): void {
+    const standalone = isStandalonePWA();
+    const visibilityState = typeof document !== 'undefined' ? document.visibilityState : undefined;
+    const hidden = typeof document !== 'undefined' ? document.hidden : undefined;
+
+    console.info(`[PlaybackManager][debug] ${event}`, {
+      standalone,
+      backgroundSafeMode: this.backgroundSafeMode,
+      activePlayer: this.activePlayer,
+      storeIsPlaying: usePlayerStore.getState().isPlaying,
+      currentSongId: usePlayerStore.getState().currentSong?.id ?? null,
+      visibilityState,
+      hidden,
+      ...extra,
+    });
   }
 
   private updateRadioMediaSession(station: RadioState | null): void {

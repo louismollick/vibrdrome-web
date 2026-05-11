@@ -38,3 +38,5 @@ screenshot2.png
 credentials.json
 secrets.json
 vibrdrome-web-screenshots/
+.vercel
+.env*.local

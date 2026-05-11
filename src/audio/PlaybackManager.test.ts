@@ -172,6 +172,42 @@ describe('PlaybackManager cast integration', () => {
     expect(mediaSession.playbackState).toBe('playing');
   });
 
+  it('invokes transport methods for song media-session play and pause actions', async () => {
+    const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
+    const resumeSpy = vi.spyOn(pm as unknown as { resume: () => Promise<void> }, 'resume')
+      .mockResolvedValue(undefined);
+    const pauseSpy = vi.spyOn(pm as unknown as { pause: () => void }, 'pause')
+      .mockImplementation(() => {});
+    const song = {
+      id: 'song-1',
+      title: 'Track',
+      artist: 'Artist',
+      album: 'Album',
+      coverArt: 'cover-1',
+    };
+
+    pm.updateMediaSession(song);
+
+    const handlers = new Map(
+      mediaSession.setActionHandler.mock.calls.map(([action, handler]) => [action, handler]),
+    );
+    const playHandler = handlers.get('play') as (() => void | Promise<void>) | undefined;
+    const pauseHandler = handlers.get('pause') as (() => void) | undefined;
+
+    expect(playHandler).toBeTypeOf('function');
+    expect(pauseHandler).toBeTypeOf('function');
+
+    usePlayerStore.setState({ isPlaying: false });
+    await playHandler?.();
+    expect(resumeSpy).toHaveBeenCalledTimes(1);
+    expect(usePlayerStore.getState().isPlaying).toBe(true);
+
+    usePlayerStore.setState({ isPlaying: true });
+    pauseHandler?.();
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(usePlayerStore.getState().isPlaying).toBe(false);
+  });
+
   it('publishes radio media session state with transport-only controls', () => {
     const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
     const station = {
