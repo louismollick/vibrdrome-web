@@ -11,11 +11,6 @@ const manager = getPlaybackManager();
 
 export function usePlayback() {
   const initializedRef = useRef(false);
-  const lastSongIdRef = useRef<string | null>(null);
-  const playTriggeredRef = useRef(false);
-
-  const currentSong = usePlayerStore((s) => s.currentSong);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const playbackSpeed = usePlayerStore((s) => s.playbackSpeed);
   const eqBands = useEQStore((s) => s.bands);
   const eqEnabled = useEQStore((s) => s.enabled);
@@ -106,89 +101,65 @@ export function usePlayback() {
     };
   }, []);
 
-  // Watch for currentSong changes -> call play()
-  // ONLY reacts to currentSong changes, NOT radioMode changes
   useEffect(() => {
-    if (!currentSong) {
-      lastSongIdRef.current = null;
-      return;
-    }
+    const unsubscribe = usePlayerStore.subscribe((state, prevState) => {
+      const songChanged = state.currentSong?.id !== prevState.currentSong?.id;
+      const playingChanged = state.isPlaying !== prevState.isPlaying;
+      let handledBySongChange = false;
 
-    if (currentSong.id === lastSongIdRef.current) return;
-    lastSongIdRef.current = currentSong.id;
+      if (songChanged) {
+        const currentSong = state.currentSong;
+        if (!currentSong || !initializedRef.current || state.radioMode) return;
 
-    if (!initializedRef.current) return;
+        handledBySongChange = true;
+        const restoredPosition = state.positionMs;
+        manager.play(currentSong).then(() => {
+          // Seek to restored position after reload (e.g., page refresh mid-song)
+          const latestState = usePlayerStore.getState();
+          if (latestState.currentSong?.id === currentSong.id && restoredPosition > 0) {
+            manager.seek(restoredPosition);
+          }
+        });
 
-    // Don't play song if radio is active
-    if (usePlayerStore.getState().radioMode) return;
+        // Desktop notification
+        if (useUIStore.getState().notificationsEnabled && Notification.permission === 'granted') {
+          const icon = currentSong.coverArt
+            ? getSubsonicClient().getCoverArt(currentSong.coverArt, 256)
+            : undefined;
+          new Notification(currentSong.title, {
+            body: `${currentSong.artist ?? 'Unknown Artist'} — ${currentSong.album ?? 'Unknown Album'}`,
+            icon,
+            silent: true,
+            tag: 'vibrdrome-now-playing',
+          });
+        }
+      }
 
-    playTriggeredRef.current = true;
-    const restoredPosition = usePlayerStore.getState().positionMs;
-    manager.play(currentSong).then(() => {
-      // Seek to restored position after reload (e.g., page refresh mid-song)
-      if (restoredPosition > 0) {
-        manager.seek(restoredPosition);
+      if (!playingChanged || !state.currentSong || state.radioMode || handledBySongChange) return;
+
+      if (state.isPlaying) {
+        if (!manager.hasSource()) {
+          manager.play(state.currentSong);
+        } else {
+          manager.resume();
+        }
+      } else {
+        manager.pause();
+        syncPosition();
+        // Persist position locally for restore on reload
+        try {
+          const raw = localStorage.getItem('vibrdrome_queue');
+          if (raw) {
+            const data = JSON.parse(raw);
+            data.positionMs = state.positionMs;
+            localStorage.setItem('vibrdrome_queue', JSON.stringify(data));
+          }
+        } catch { /* ignore */ }
       }
     });
 
-    // Desktop notification
-    if (useUIStore.getState().notificationsEnabled && Notification.permission === 'granted') {
-      const icon = currentSong.coverArt
-        ? getSubsonicClient().getCoverArt(currentSong.coverArt, 256)
-        : undefined;
-      new Notification(currentSong.title, {
-        body: `${currentSong.artist ?? 'Unknown Artist'} — ${currentSong.album ?? 'Unknown Album'}`,
-        icon,
-        silent: true,
-        tag: 'vibrdrome-now-playing',
-      });
-    }
-  }, [currentSong]);
-
-  // Track previous isPlaying to detect actual toggles
-  const prevIsPlayingRef = useRef(isPlaying);
-
-  // Watch for isPlaying changes -> pause/resume
-  // ONLY reacts to isPlaying changes
-  useEffect(() => {
-    if (!currentSong) return;
-
-    // Don't control song audio when radio is active
-    if (usePlayerStore.getState().radioMode) {
-      prevIsPlayingRef.current = isPlaying;
-      return;
-    }
-
-    if (playTriggeredRef.current) {
-      playTriggeredRef.current = false;
-      prevIsPlayingRef.current = isPlaying;
-      return;
-    }
-
-    if (isPlaying === prevIsPlayingRef.current) return;
-    prevIsPlayingRef.current = isPlaying;
-
-    if (isPlaying) {
-      if (!manager.hasSource()) {
-        manager.play(currentSong);
-      } else {
-        manager.resume();
-      }
-    } else {
-      manager.pause();
-      syncPosition();
-      // Persist position locally for restore on reload
-      const state = usePlayerStore.getState();
-      try {
-        const raw = localStorage.getItem('vibrdrome_queue');
-        if (raw) {
-          const data = JSON.parse(raw);
-          data.positionMs = state.positionMs;
-          localStorage.setItem('vibrdrome_queue', JSON.stringify(data));
-        }
-      } catch { /* ignore */ }
-    }
-  }, [isPlaying, currentSong]);
+    return unsubscribe;
+  }, []);
 
   // Watch for playback speed changes
   useEffect(() => {

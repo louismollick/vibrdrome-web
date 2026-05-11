@@ -181,12 +181,27 @@ class PlaybackManager {
     this.cancelCrossfade();
     this.clearPreload();
 
-    // Pause current audio before changing src to prevent spurious 'ended' events
-    this.internalPause = true;
-    this.getActiveAudio().pause();
-    this.internalPause = false;
+    const shouldSwapPlayersForBackgroundTrackChange = this.backgroundSafeMode && this.hasSource();
+    const targetPlayer = shouldSwapPlayersForBackgroundTrackChange
+      ? (this.activePlayer === 'A' ? 'B' : 'A')
+      : this.activePlayer;
+    const audio = this.getAudioForPlayer(targetPlayer);
 
-    const audio = this.getActiveAudio();
+    if (shouldSwapPlayersForBackgroundTrackChange) {
+      // iOS background playback is more reliable when the new track is staged
+      // on the inactive element and swapped in after playback starts.
+      this.internalPause = true;
+      audio.pause();
+      audio.src = '';
+      audio.load();
+      this.internalPause = false;
+    } else {
+      // Pause current audio before changing src to prevent spurious 'ended' events
+      this.internalPause = true;
+      this.getActiveAudio().pause();
+      this.internalPause = false;
+    }
+
     const quality = uiState.streamQuality;
     const url = getSubsonicClient().stream(song.id, quality || undefined);
 
@@ -204,13 +219,43 @@ class PlaybackManager {
     } catch (err) {
       // AbortError is expected when a new play() call interrupts a pending one — ignore it
       if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (shouldSwapPlayersForBackgroundTrackChange) {
+        this.internalPause = true;
+        audio.pause();
+        audio.src = '';
+        audio.load();
+        this.internalPause = false;
+      }
       console.error('[PlaybackManager] Play error:', err);
       usePlayerStore.getState().setPlaying(false);
       return;
     }
 
     // Bail if another play() was called while we were awaiting
-    if (thisPlayId !== this.playId) return;
+    if (thisPlayId !== this.playId) {
+      if (shouldSwapPlayersForBackgroundTrackChange) {
+        this.internalPause = true;
+        audio.pause();
+        audio.src = '';
+        audio.load();
+        this.internalPause = false;
+      }
+      return;
+    }
+
+    if (shouldSwapPlayersForBackgroundTrackChange) {
+      const previousActiveAudio = this.getActiveAudio();
+      this.activePlayer = targetPlayer;
+      this.internalPause = true;
+      previousActiveAudio.pause();
+      previousActiveAudio.src = '';
+      previousActiveAudio.load();
+      this.internalPause = false;
+      if (!isNaN(audio.duration)) {
+        usePlayerStore.getState().setDuration(Math.round(audio.duration * 1000));
+      }
+      this.applyElementVolume();
+    }
 
     // Send "now playing" notification so the server shows this session
     getSubsonicClient().scrobble(song.id, false).catch(() => {});
@@ -260,6 +305,8 @@ class PlaybackManager {
       this.startPositionTracking();
       return;
     }
+    this.configureAudioSession();
+    this.applyElementVolume();
     if (this.audioContext?.state === 'suspended') {
       await this.audioContext.resume();
     }
@@ -349,7 +396,9 @@ class PlaybackManager {
   }
 
   resumeRadio(): void {
+    this.configureAudioSession();
     if (this.radioAudio) {
+      this.radioAudio.volume = Math.max(0, Math.min(1, this.currentVolume));
       this.radioAudio.play().catch(() => { /* ignore */ });
     }
     this.setMediaSessionPlaybackState('playing');
@@ -549,6 +598,10 @@ class PlaybackManager {
 
   private getInactiveAudio(): HTMLAudioElement {
     return this.activePlayer === 'A' ? this.playerB : this.playerA;
+  }
+
+  private getAudioForPlayer(player: 'A' | 'B'): HTMLAudioElement {
+    return player === 'A' ? this.playerA : this.playerB;
   }
 
   private setupAudioChain(): void {
@@ -880,12 +933,10 @@ class PlaybackManager {
     });
 
     this.setMediaSessionActionHandler('play', () => {
-      this.resume();
       usePlayerStore.getState().setPlaying(true);
     });
 
     this.setMediaSessionActionHandler('pause', () => {
-      this.pause();
       usePlayerStore.getState().setPlaying(false);
     });
 
