@@ -14,7 +14,7 @@ import { deleteOfflineLyrics, putOfflineLyrics } from '../utils/offlineLyricsSto
 import { getCachedArtist, setCachedArtist } from '../utils/lastfmCache';
 import { resolveArtistImage } from '../utils/artistImageResolver';
 import { extractWaveform } from './waveformExtractor';
-import { AUDIO_CACHE_NAME, ART_CACHE_NAME, REQUIRED_COVER_ART_SIZES } from '../utils/downloadCache';
+import { AUDIO_CACHE_NAME, ART_CACHE_NAME, REQUIRED_COVER_ART_SIZES, buildCoverArtCacheKey } from '../utils/downloadCache';
 
 const REQUIRED_PROGRESS = {
   coverArt: 0.72,
@@ -135,14 +135,15 @@ class DownloadManager {
 
     for (const size of REQUIRED_COVER_ART_SIZES) {
       const url = client.getCoverArt(item.song.coverArt, size);
+      const cacheKey = buildCoverArtCacheKey(url);
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Cover art fetch failed: ${response.status}`);
       }
 
-      await cache.put(new Request(url), response.clone());
-      await addArtReference(url, item.song.coverArt, item.serverId);
-      coverArtKeys.push(url);
+      await cache.put(new Request(cacheKey), response.clone());
+      await addArtReference(cacheKey, item.song.coverArt, item.serverId);
+      coverArtKeys.push(cacheKey);
     }
 
     return coverArtKeys;

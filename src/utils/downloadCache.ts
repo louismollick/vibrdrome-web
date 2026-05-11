@@ -25,3 +25,23 @@ export function buildAudioCacheKey(serverUrl: string, username: string, songId: 
 export function buildAudioCacheKeyForServer(server: ServerConfig, songId: string): string {
   return buildAudioCacheKey(server.url, server.username, songId);
 }
+
+export function buildCoverArtCacheKey(coverArtUrl: string): string {
+  const url = new URL(coverArtUrl);
+  const coverArtId = url.searchParams.get('id');
+
+  if (!coverArtId) return coverArtUrl;
+
+  const params = new URLSearchParams({
+    server: url.origin,
+    id: coverArtId,
+  });
+
+  const username = url.searchParams.get('u');
+  const size = url.searchParams.get('size');
+
+  if (username) params.set('user', username);
+  if (size) params.set('size', size);
+
+  return `${window.location.origin}/__offline_cover_art__?${params.toString()}`;
+}

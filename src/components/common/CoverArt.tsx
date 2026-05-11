@@ -29,6 +29,7 @@ function stableCoverArtUrl(coverArt: string, fetchSize: number): string {
 // Track which URLs have successfully loaded (max 1000)
 const LOADED_MAX = 1000;
 const loadedUrls = new Set<string>();
+const failedUrls = new Set<string>();
 
 // Shared IntersectionObserver with large rootMargin to pre-load ahead
 let observer: IntersectionObserver | null = null;
@@ -93,22 +94,22 @@ export default function CoverArt({ coverArt, size, className = '' }: CoverArtPro
   // we reset by detecting the mismatch during render (no effect needed).
   const [imgState, setImgState] = useState(() => {
     const cached = url ? loadedUrls.has(url) : false;
-    return { url, active: cached, loaded: cached };
+    return { url, active: cached, loaded: cached, failed: url ? failedUrls.has(url) : false };
   });
 
   // If the url changed since last render, reset state synchronously (derived state pattern)
   if (imgState.url !== url) {
     const cached = url ? loadedUrls.has(url) : false;
-    setImgState({ url, active: cached, loaded: cached });
+    setImgState({ url, active: cached, loaded: cached, failed: url ? failedUrls.has(url) : false });
   }
 
-  const { active, loaded } = imgState;
+  const { active, loaded, failed } = imgState;
   const setActive = (v: boolean) => setImgState((s) => ({ ...s, active: v }));
   const setLoaded = (v: boolean) => setImgState((s) => ({ ...s, loaded: v }));
 
   // Observe for lazy loading
   useEffect(() => {
-    if (active || !coverArt) return;
+    if (active || failed || !coverArt) return;
 
     const el = containerRef.current;
     if (!el) return;
@@ -121,9 +122,10 @@ export default function CoverArt({ coverArt, size, className = '' }: CoverArtPro
       callbacks.delete(el);
       obs.unobserve(el);
     };
-  }, [url, active, coverArt]);
+  }, [url, active, failed, coverArt]);
 
   const handleLoad = () => {
+    failedUrls.delete(url);
     if (loadedUrls.size >= LOADED_MAX) {
       const first = loadedUrls.values().next().value;
       if (first !== undefined) loadedUrls.delete(first);
@@ -158,7 +160,10 @@ export default function CoverArt({ coverArt, size, className = '' }: CoverArtPro
           decoding="async"
           className={`absolute inset-0 h-full w-full rounded-lg object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
           onLoad={handleLoad}
-          onError={() => { setActive(false); setLoaded(false); }}
+          onError={() => {
+            failedUrls.add(url);
+            setImgState((s) => ({ ...s, active: false, loaded: false, failed: true }));
+          }}
         />
       )}
     </div>

@@ -48,6 +48,25 @@ function buildAudioCacheKey(requestUrl) {
   return `${self.location.origin}/__offline_audio__?${params.toString()}`;
 }
 
+function buildCoverArtCacheKey(requestUrl) {
+  const url = new URL(requestUrl);
+  const coverArtId = url.searchParams.get('id');
+  if (!coverArtId) return requestUrl;
+
+  const params = new URLSearchParams({
+    server: url.origin,
+    id: coverArtId,
+  });
+
+  const username = url.searchParams.get('u');
+  const size = url.searchParams.get('size');
+
+  if (username) params.set('user', username);
+  if (size) params.set('size', size);
+
+  return `${self.location.origin}/__offline_cover_art__?${params.toString()}`;
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
@@ -134,16 +153,20 @@ self.addEventListener('fetch', (event) => {
   // Cover art — cache first with network fallback
   if (url.pathname.includes('/rest/getCoverArt')) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
+      (async () => {
+        const cacheKey = buildCoverArtCacheKey(event.request.url);
+        const cache = await caches.open(ART_CACHE);
+        const cached = await cache.match(new Request(cacheKey));
         if (cached) return cached;
+
         return fetch(event.request).then((response) => {
           if (response.ok) {
             const clone = response.clone();
-            caches.open(ART_CACHE).then((cache) => cache.put(event.request, clone));
+            cache.put(new Request(cacheKey), clone);
           }
           return response;
         }).catch(() => new Response('', { status: 404 }));
-      })
+      })()
     );
     return;
   }
