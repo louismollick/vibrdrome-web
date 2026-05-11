@@ -1,12 +1,11 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
-import { useAuthStore } from '../stores/authStore';
-import { useDownloadStore } from '../stores/downloadStore';
 import type { Album, AlbumListType, Genre } from '../types/subsonic';
-import { Header, AlbumCard, LoadingSpinner } from '../components/common';
-import { buildOfflineLibrary, filterOfflineAlbums } from '../utils/offlineLibrary';
+import { Header, AlbumCard, LoadingSpinner, StateMessage } from '../components/common';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
+import { filterOfflineAlbums } from '../utils/offlineLibrary';
 
 const PAGE_SIZE = 40;
 
@@ -18,8 +17,7 @@ export default function AlbumsListScreen() {
   const toYear = searchParams.get('toYear') ? Number(searchParams.get('toYear')) : undefined;
   const title = searchParams.get('title') || 'Albums';
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
-  const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
+  const offlineLibrary = useOfflineLibrary();
 
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,10 +26,6 @@ export default function AlbumsListScreen() {
   const [usingOfflineData, setUsingOfflineData] = useState(false);
   const offsetRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
-    [cachedSongsMap, activeServerId],
-  );
 
   const fetchPage = useCallback(async (offset: number, isInitial: boolean) => {
     if (isInitial) setLoading(true);
@@ -197,7 +191,10 @@ export default function AlbumsListScreen() {
         )}
 
         {!hasMore && albums.length === 0 && (
-          <p className="py-8 text-center text-text-muted">No albums found.</p>
+          <StateMessage
+            title={usingOfflineData ? 'No downloaded albums available offline' : 'No albums found'}
+            body={usingOfflineData ? 'Download albums while online to browse them here later.' : undefined}
+          />
         )}
       </div>
     </div>

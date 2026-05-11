@@ -1,13 +1,13 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { usePlayerStore } from '../stores/playerStore';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
-import { useAuthStore } from '../stores/authStore';
-import { useDownloadStore } from '../stores/downloadStore';
 import type { ArtistIndex, Genre, Song } from '../types/subsonic';
-import { Header, CoverArt, LoadingSpinner } from '../components/common';
-import { buildOfflineLibrary } from '../utils/offlineLibrary';
+import { Header, CoverArt, LoadingSpinner, StateMessage } from '../components/common';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { getOfflineMessage } from '../utils/offlineCapability';
 
 export default function ArtistsScreen() {
   const navigate = useNavigate();
@@ -15,8 +15,9 @@ export default function ArtistsScreen() {
   const [indexes, setIndexes] = useState<ArtistIndex[]>([]);
   const [loading, setLoading] = useState(true);
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
-  const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
+  const offlineLibrary = useOfflineLibrary();
+  const isOnline = useOnlineStatus();
+  const artistRadioOfflineMessage = getOfflineMessage('artistRadio');
 
   const [filterText, setFilterText] = useState('');
   const [filterGenre, setFilterGenre] = useState('');
@@ -24,10 +25,6 @@ export default function ArtistsScreen() {
   const [genres, setGenres] = useState<Genre[]>([]);
   const [remoteArtistGenres, setRemoteArtistGenres] = useState<Map<string, Set<string>>>(new Map());
   const [usingOfflineData, setUsingOfflineData] = useState(false);
-  const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
-    [cachedSongsMap, activeServerId],
-  );
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- set loading before async fetch
@@ -85,6 +82,7 @@ export default function ArtistsScreen() {
   const [radioLoading, setRadioLoading] = useState(false);
 
   const handleArtistRadio = async (artistId: string, artistName: string) => {
+    if (!isOnline) return;
     if (radioLoading) return;
     setRadioLoading(true);
     try {
@@ -223,9 +221,10 @@ export default function ArtistsScreen() {
                   {/* Artist radio button — shows on hover */}
                   <button
                     onClick={(e) => { e.stopPropagation(); handleArtistRadio(artist.id, artist.name); }}
-                    className="absolute top-1 right-1 flex h-7 w-7 items-center justify-center rounded-full bg-accent text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
+                    disabled={!isOnline}
+                    title={!isOnline ? artistRadioOfflineMessage.title : 'Artist Radio'}
+                    className="absolute top-1 right-1 flex h-7 w-7 items-center justify-center rounded-full bg-accent text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                     aria-label={`Play ${artist.name} radio`}
-                    title="Artist Radio"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
                       <path d="M8 5v14l11-7z" />
@@ -252,7 +251,10 @@ export default function ArtistsScreen() {
         ))}
 
         {filteredIndexes.length === 0 && (
-          <p className="py-8 text-center text-text-muted">No artists found</p>
+          <StateMessage
+            title={usingOfflineData ? 'No downloaded artists available offline' : 'No artists found'}
+            body={usingOfflineData ? 'Download songs while online to browse artists here later.' : undefined}
+          />
         )}
       </div>
     </div>

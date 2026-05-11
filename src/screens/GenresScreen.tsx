@@ -1,23 +1,16 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
-import { useAuthStore } from '../stores/authStore';
-import { useDownloadStore } from '../stores/downloadStore';
 import type { Genre } from '../types/subsonic';
-import { Header, LoadingSpinner } from '../components/common';
-import { buildOfflineLibrary } from '../utils/offlineLibrary';
+import { Header, LoadingSpinner, StateMessage } from '../components/common';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
 
 export default function GenresScreen() {
   const navigate = useNavigate();
   const [genres, setGenres] = useState<Genre[]>([]);
   const [loading, setLoading] = useState(true);
   const [usingOfflineData, setUsingOfflineData] = useState(false);
-  const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
-  const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
-    [cachedSongsMap, activeServerId],
-  );
+  const offlineLibrary = useOfflineLibrary();
 
   useEffect(() => {
     const load = async () => {
@@ -86,7 +79,10 @@ export default function GenresScreen() {
         </div>
 
         {genres.length === 0 && (
-          <p className="py-8 text-center text-text-muted">No genres found.</p>
+          <StateMessage
+            title={usingOfflineData ? 'No downloaded genres available offline' : 'No genres found'}
+            body={usingOfflineData ? 'Download songs with genre metadata while online to browse them here later.' : undefined}
+          />
         )}
       </div>
     </div>

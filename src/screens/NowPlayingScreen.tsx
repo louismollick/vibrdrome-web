@@ -6,7 +6,9 @@ import { CoverArt } from '../components/common';
 import DynamicBackground from '../components/player/DynamicBackground';
 import DesktopNowPlaying from '../components/player/DesktopNowPlaying';
 import RadioNowPlaying from '../components/player/RadioNowPlaying';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useIsDesktop } from '../hooks/useMediaQuery';
+import { getOfflineMessage } from '../utils/offlineCapability';
 
 export default function NowPlayingScreen() {
   const isDesktop = useIsDesktop();
@@ -42,6 +44,7 @@ const SLEEP_OPTIONS = [5, 10, 15, 30, 45, 60, 120];
 
 function MobileNowPlaying() {
   const navigate = useNavigate();
+  const isOnline = useOnlineStatus();
   const {
     currentSong,
     isPlaying,
@@ -133,6 +136,7 @@ function MobileNowPlaying() {
   }, []);
 
   const swipeHandlers = useSwipeDown(() => navigate(-1));
+  const visualizerOfflineMessage = getOfflineMessage('visualizer');
 
   return (
     <DynamicBackground coverArt={currentSong?.coverArt} className="flex h-full flex-col" {...swipeHandlers}>
@@ -150,7 +154,13 @@ function MobileNowPlaying() {
 
         <div className="flex items-center gap-1.5 md:gap-3">
           {/* Visualizer */}
-          <button onClick={() => navigate('/visualizer')} className="flex h-7 w-7 md:h-8 md:w-8 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary" aria-label="Visualizer">
+          <button
+            onClick={() => navigate('/visualizer')}
+            disabled={!isOnline}
+            title={!isOnline ? visualizerOfflineMessage.title : undefined}
+            className="flex h-7 w-7 md:h-8 md:w-8 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Visualizer"
+          >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 md:h-5 md:w-5">
               <path strokeLinecap="round" d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h2" />
             </svg>

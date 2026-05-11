@@ -1,22 +1,19 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { usePlayerStore } from '../stores/playerStore';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
-import { useAuthStore } from '../stores/authStore';
-import { useDownloadStore } from '../stores/downloadStore';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import type { Song, Genre } from '../types/subsonic';
-import { Header, SongRow, LoadingSpinner } from '../components/common';
+import { Header, SongRow, LoadingSpinner, StateMessage } from '../components/common';
 import BatchActionBar from '../components/common/BatchActionBar';
-import { buildOfflineLibrary } from '../utils/offlineLibrary';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
 
 const PAGE_SIZE = 100;
 
 export default function SongsScreen() {
   const playSongs = usePlayerStore((s) => s.playSongs);
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
-  const activeServerId = useAuthStore((s) => s.activeServerId);
-  const cachedSongsMap = useDownloadStore((s) => s.cachedSongs);
+  const offlineLibrary = useOfflineLibrary();
 
   const [songs, setSongs] = useState<Song[]>([]);
   const [allSongs, setAllSongs] = useState<Song[]>([]);
@@ -33,10 +30,6 @@ export default function SongsScreen() {
   const [usingOfflineData, setUsingOfflineData] = useState(false);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const offlineLibrary = useMemo(
-    () => buildOfflineLibrary(Array.from(cachedSongsMap.values()).filter((song) => song.serverId === activeServerId)),
-    [cachedSongsMap, activeServerId],
-  );
 
   // Load genres for filter
   useEffect(() => {
@@ -281,7 +274,10 @@ export default function SongsScreen() {
             )}
 
             {songs.length === 0 && !loading && (
-              <p className="py-8 text-center text-text-muted">No songs found</p>
+              <StateMessage
+                title={usingOfflineData ? 'No downloaded songs available offline' : 'No songs found'}
+                body={usingOfflineData ? 'Download songs while online to play them offline later.' : undefined}
+              />
             )}
           </div>
         </div>

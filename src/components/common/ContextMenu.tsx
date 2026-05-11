@@ -5,6 +5,7 @@ interface MenuItem {
   icon?: string;
   onClick: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }
 
 interface ContextMenuProps {
@@ -72,11 +73,15 @@ export default function ContextMenu({ items, trigger }: ContextMenuProps) {
               key={i}
               onClick={(e) => {
                 e.stopPropagation();
+                if (item.disabled) return;
                 item.onClick();
                 setOpen(false);
               }}
-              className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors hover:bg-bg-tertiary ${
-                item.danger ? 'text-red-400' : 'text-text-primary'
+              disabled={item.disabled}
+              className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
+                item.disabled
+                  ? 'cursor-not-allowed text-text-muted'
+                  : `hover:bg-bg-tertiary ${item.danger ? 'text-red-400' : 'text-text-primary'}`
               }`}
             >
               {item.icon && <span className="text-base">{item.icon}</span>}

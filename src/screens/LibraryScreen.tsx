@@ -1,15 +1,19 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { usePlayerStore } from '../stores/playerStore';
 import { useLibraryStore } from '../stores/libraryStore';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
 import type { LibraryItem, CustomCarousel } from '../stores/libraryStore';
 import AlbumCard from '../components/common/AlbumCard';
 import Header from '../components/common/Header';
+import StateMessage from '../components/common/StateMessage';
 import FirstRunTooltip from '../components/common/FirstRunTooltip';
 import type { Album, Playlist } from '../types/subsonic';
 import CoverArt from '../components/common/CoverArt';
+import { getOfflineMessage } from '../utils/offlineCapability';
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 const CAROUSEL_SIZE = 20;
@@ -26,11 +30,61 @@ function isCacheValid(key: string): boolean {
   return !!cached && Date.now() - cached.fetchedAt < CACHE_DURATION;
 }
 
-function useCachedAlbums(type: string, folderId: string | null, size = CAROUSEL_SIZE) {
+function getOfflineCarouselAlbums(type: string, offlineAlbums: Album[], size = CAROUSEL_SIZE) {
+  switch (type) {
+    case 'random':
+      return [...offlineAlbums].sort(() => Math.random() - 0.5).slice(0, size);
+    case 'starred':
+      return offlineAlbums.filter((album) => !!album.starred).slice(0, size);
+    case 'thisYear': {
+      const year = new Date().getFullYear();
+      return offlineAlbums.filter((album) => album.year === year).slice(0, size);
+    }
+    case 'frequent':
+      return [...offlineAlbums]
+        .sort((a, b) => (b.songCount ?? 0) - (a.songCount ?? 0) || a.name.localeCompare(b.name))
+        .slice(0, size);
+    case 'recent':
+    case 'newest':
+    default:
+      return offlineAlbums.slice(0, size);
+  }
+}
+
+function getOfflineCustomCarouselAlbums(config: CustomCarousel, offlineAlbums: Album[]) {
+  if (config.type === 'byYear' || config.type === 'decade') {
+    return offlineAlbums
+      .filter((album) => {
+        if (config.fromYear === undefined || config.toYear === undefined) return true;
+        return (album.year ?? Number.MIN_SAFE_INTEGER) >= config.fromYear
+          && (album.year ?? Number.MAX_SAFE_INTEGER) <= config.toYear;
+      })
+      .slice(0, CAROUSEL_SIZE);
+  }
+
+  if (config.type === 'byGenre') {
+    const genreList = (config.genres ?? (config.genre ? [config.genre] : [])).map((genre) => genre.toLowerCase());
+    return offlineAlbums
+      .filter((album) => album.genre && genreList.includes(album.genre.toLowerCase()))
+      .slice(0, CAROUSEL_SIZE);
+  }
+
+  if (config.type === 'playlist') {
+    return [];
+  }
+
+  return offlineAlbums
+    .slice()
+    .sort((a, b) => (b.songCount ?? 0) - (a.songCount ?? 0) || a.name.localeCompare(b.name))
+    .slice(0, CAROUSEL_SIZE);
+}
+
+function useCachedAlbums(type: string, folderId: string | null, offlineAlbums: Album[], isOnline: boolean, size = CAROUSEL_SIZE) {
   const cacheKey = `${type}:${folderId ?? 'all'}`;
   const [albums, setAlbums] = useState<Album[]>(() => albumCache[cacheKey]?.data ?? []);
   const [loading, setLoading] = useState(() => !isCacheValid(cacheKey));
   const [fetchKey, setFetchKey] = useState(cacheKey);
+  const offlineFallback = getOfflineCarouselAlbums(type, offlineAlbums, size);
 
   // Reset loading state when cache key changes
   if (fetchKey !== cacheKey) {
@@ -45,6 +99,7 @@ function useCachedAlbums(type: string, folderId: string | null, size = CAROUSEL_
 
   useEffect(() => {
     if (isCacheValid(cacheKey)) return;
+    if (!isOnline) return;
 
     let cancelled = false;
 
@@ -74,7 +129,11 @@ function useCachedAlbums(type: string, folderId: string | null, size = CAROUSEL_
     return () => {
       cancelled = true;
     };
-  }, [type, size, cacheKey, folderId]);
+  }, [type, size, cacheKey, folderId, isOnline]);
+
+  if (!isOnline && !isCacheValid(cacheKey)) {
+    return { albums: offlineFallback, loading: false };
+  }
 
   return { albums, loading };
 }
@@ -199,11 +258,25 @@ const CAROUSEL_SEE_ALL: Record<string, string> = {
 export default function LibraryScreen() {
   const navigate = useNavigate();
   const playSongs = usePlayerStore((s) => s.playSongs);
+  const offlineLibrary = useOfflineLibrary();
+  const isOnline = useOnlineStatus();
   const { pills, carousels, customCarousels, pillsPosition } = useLibraryStore();
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
   const [showCustomize, setShowCustomize] = useState(false);
+  const radioOfflineMessage = getOfflineMessage('radio');
+  const playlistsOfflineMessage = getOfflineMessage('playlists');
+  const foldersOfflineMessage = getOfflineMessage('folders');
+  const randomMixOfflineMessage = getOfflineMessage('randomMix');
+  const randomAlbumOfflineMessage = getOfflineMessage('randomAlbum');
 
   const handleRandomMix = async () => {
+    if (!isOnline) {
+      if (offlineLibrary.songs.length > 0) {
+        playSongs([...offlineLibrary.songs].sort(() => Math.random() - 0.5), 0);
+      }
+      return;
+    }
+
     try {
       const songs = await getSubsonicClient().getRandomSongs(50, undefined, activeFolderId ?? undefined);
       if (songs.length > 0) {
@@ -213,6 +286,14 @@ export default function LibraryScreen() {
   };
 
   const handleRandomAlbum = async () => {
+    if (!isOnline) {
+      const randomAlbum = offlineLibrary.albums[Math.floor(Math.random() * offlineLibrary.albums.length)];
+      if (randomAlbum) {
+        navigate(`/album/${randomAlbum.id}`);
+      }
+      return;
+    }
+
     try {
       const albums = await getSubsonicClient().getAlbumList2('random', 1, undefined, undefined, undefined, undefined, activeFolderId ?? undefined);
       if (albums.length > 0) {
@@ -220,6 +301,14 @@ export default function LibraryScreen() {
       }
     } catch { /* silently fail */ }
   };
+
+  const pillDisabledReasons: Partial<Record<string, string>> = !isOnline ? {
+    radio: radioOfflineMessage.title,
+    folders: foldersOfflineMessage.title,
+    playlists: playlistsOfflineMessage.title,
+    randomMix: offlineLibrary.songs.length === 0 ? randomMixOfflineMessage.title : undefined,
+    randomAlbum: offlineLibrary.albums.length === 0 ? randomAlbumOfflineMessage.title : undefined,
+  } : {};
 
   const PILL_ACTIONS: Record<string, () => void> = {
     genres: () => navigate('/genres'),
@@ -274,18 +363,30 @@ export default function LibraryScreen() {
     <div className="pb-20 md:pb-4">
       <Header title="Library" rightActions={rightActions} />
 
+      {!isOnline && (
+        <div className="px-4 pb-4">
+          <div className="rounded-xl border border-border bg-bg-secondary px-4 py-3 text-sm text-text-muted">
+            Offline mode: showing locally available content.
+          </div>
+        </div>
+      )}
+
       {/* Pills (above position) */}
-      {pillsPosition === 'above' && <PillsGrid pills={visiblePills} actions={PILL_ACTIONS} icons={PILL_ICONS} />}
+      {pillsPosition === 'above' && (
+        <PillsGrid pills={visiblePills} actions={PILL_ACTIONS} icons={PILL_ICONS} disabledReasons={pillDisabledReasons} />
+      )}
 
       {/* Default Carousels */}
       {visibleCarousels.map((carousel) => (
         carousel.id === 'playlists' ? (
-          <PlaylistCarousel key="playlists" onSeeAll={() => navigate('/playlists')} />
+          <PlaylistCarousel key="playlists" onSeeAll={() => navigate('/playlists')} isOnline={isOnline} />
         ) : (
           <AlbumCarousel
             key={`${carousel.id}:${activeFolderId ?? 'all'}`}
             type={carousel.id}
             folderId={activeFolderId}
+            offlineAlbums={offlineLibrary.albums}
+            isOnline={isOnline}
             title={CAROUSEL_LABELS[carousel.id] ?? carousel.label}
             onSeeAll={() => navigate(CAROUSEL_SEE_ALL[carousel.id] ?? '/albums')}
           />
@@ -298,6 +399,8 @@ export default function LibraryScreen() {
           key={`custom:${cc.id}:${activeFolderId ?? 'all'}`}
           config={cc}
           folderId={activeFolderId}
+          offlineAlbums={offlineLibrary.albums}
+          isOnline={isOnline}
           onSeeAll={() => {
             if (cc.type === 'byYear' || cc.type === 'decade') {
               navigate(`/albums?type=byYear&fromYear=${cc.fromYear}&toYear=${cc.toYear}`);
@@ -313,7 +416,9 @@ export default function LibraryScreen() {
       ))}
 
       {/* Pills (below position) */}
-      {pillsPosition === 'below' && <PillsGrid pills={visiblePills} actions={PILL_ACTIONS} icons={PILL_ICONS} />}
+      {pillsPosition === 'below' && (
+        <PillsGrid pills={visiblePills} actions={PILL_ACTIONS} icons={PILL_ICONS} disabledReasons={pillDisabledReasons} />
+      )}
 
       {showCustomize && (
         <CustomizeModal onClose={() => setShowCustomize(false)} />
@@ -322,29 +427,38 @@ export default function LibraryScreen() {
   );
 }
 
-function PlaylistCarousel({ onSeeAll }: { onSeeAll: () => void }) {
+function PlaylistCarousel({ onSeeAll, isOnline }: { onSeeAll: () => void; isOnline: boolean }) {
   const navigate = useNavigate();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [loading, setLoading] = useState(true);
+  const playlistsOfflineMessage = getOfflineMessage('playlists');
 
   useEffect(() => {
+    if (!isOnline) return;
+
     let cancelled = false;
     getSubsonicClient().getPlaylists()
       .then((data) => { if (!cancelled) setPlaylists(data); })
       .catch(() => { /* silently fail */ })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [isOnline]);
 
   return (
     <section className="mb-6">
       <div className="flex items-center justify-between px-4 pb-3">
         <h2 className="text-lg font-bold text-text-primary">Playlists</h2>
-        <button onClick={onSeeAll} className="text-sm font-medium text-accent transition-colors hover:text-accent-hover">
+        <button
+          onClick={onSeeAll}
+          disabled={!isOnline}
+          className="text-sm font-medium text-accent transition-colors hover:text-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
           See All
         </button>
       </div>
-      {loading ? (
+      {!isOnline ? (
+        <StateMessage title={playlistsOfflineMessage.title} body={playlistsOfflineMessage.body} />
+      ) : loading ? (
         <div className="flex items-center justify-center py-8">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-bg-tertiary border-t-accent" />
         </div>
@@ -372,7 +486,17 @@ function PlaylistCarousel({ onSeeAll }: { onSeeAll: () => void }) {
   );
 }
 
-function PillsGrid({ pills, actions, icons }: { pills: LibraryItem[]; actions: Record<string, () => void>; icons: Record<string, React.ReactNode> }) {
+function PillsGrid({
+  pills,
+  actions,
+  icons,
+  disabledReasons = {},
+}: {
+  pills: LibraryItem[];
+  actions: Record<string, () => void>;
+  icons: Record<string, React.ReactNode>;
+  disabledReasons?: Partial<Record<string, string | undefined>>;
+}) {
   if (pills.length === 0) return null;
   return (
     <div className="grid grid-cols-2 gap-1.5 px-3 pb-4 md:gap-2 md:px-4 md:pb-6">
@@ -380,7 +504,9 @@ function PillsGrid({ pills, actions, icons }: { pills: LibraryItem[]; actions: R
         <button
           key={pill.id}
           onClick={actions[pill.id]}
-          className="flex items-center gap-2 rounded-full bg-bg-secondary px-3 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-bg-tertiary md:gap-2.5 md:px-4 md:py-2.5"
+          disabled={!!disabledReasons[pill.id]}
+          title={disabledReasons[pill.id]}
+          className="flex items-center gap-2 rounded-full bg-bg-secondary px-3 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50 md:gap-2.5 md:px-4 md:py-2.5"
         >
           <span className="text-text-secondary">{icons[pill.id]}</span>
           <span className="truncate">{pill.label}</span>
@@ -394,14 +520,18 @@ function AlbumCarousel({
   type,
   title,
   folderId,
+  offlineAlbums,
+  isOnline,
   onSeeAll,
 }: {
   type: string;
   title: string;
   folderId: string | null;
+  offlineAlbums: Album[];
+  isOnline: boolean;
   onSeeAll: () => void;
 }) {
-  const { albums, loading } = useCachedAlbums(type, folderId, CAROUSEL_SIZE);
+  const { albums, loading } = useCachedAlbums(type, folderId, offlineAlbums, isOnline, CAROUSEL_SIZE);
 
   return (
     <section className="mb-6">
@@ -437,16 +567,24 @@ function AlbumCarousel({
 function CustomAlbumCarousel({
   config,
   folderId,
+  offlineAlbums,
+  isOnline,
   onSeeAll,
 }: {
   config: CustomCarousel;
   folderId: string | null;
+  offlineAlbums: Album[];
+  isOnline: boolean;
   onSeeAll: () => void;
 }) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
+  const playlistsOfflineMessage = getOfflineMessage('playlists');
+  const offlineAlbumsForCarousel = getOfflineCustomCarouselAlbums(config, offlineAlbums);
 
   useEffect(() => {
+    if (!isOnline) return;
+
     let cancelled = false;
 
     const client = getSubsonicClient();
@@ -492,7 +630,7 @@ function CustomAlbumCarousel({
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [config, folderId]);
+  }, [config, folderId, isOnline]);
 
   return (
     <section className="mb-6">
@@ -502,7 +640,21 @@ function CustomAlbumCarousel({
           See All
         </button>
       </div>
-      {loading ? (
+      {!isOnline && config.type === 'playlist' ? (
+        <StateMessage title={playlistsOfflineMessage.title} body={playlistsOfflineMessage.body} />
+      ) : !isOnline ? (
+        offlineAlbumsForCarousel.length === 0 ? (
+          <StateMessage title="No albums available offline" body="Download music while online to fill this carousel." />
+        ) : (
+          <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory px-3 pb-2 scrollbar-hide md:px-4">
+            {offlineAlbumsForCarousel.map((album, i) => (
+              <div key={`${album.id}-${i}`} className="snap-start shrink-0">
+                <AlbumCard album={album} size="small" />
+              </div>
+            ))}
+          </div>
+        )
+      ) : loading ? (
         <div className="flex items-center justify-center py-8">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-bg-tertiary border-t-accent" />
         </div>

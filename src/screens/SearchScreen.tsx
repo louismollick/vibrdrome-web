@@ -1,18 +1,26 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import Header from '../components/common/Header';
 import AlbumCard from '../components/common/AlbumCard';
 import SongRow from '../components/common/SongRow';
 import CoverArt from '../components/common/CoverArt';
+import StateMessage from '../components/common/StateMessage';
 import { usePlayerStore } from '../stores/playerStore';
 import type { Artist, Album, Song } from '../types/subsonic';
+import { fuzzyFilter } from '../utils/fuzzySearch';
+import { getOfflineMessage } from '../utils/offlineCapability';
 
 export default function SearchScreen() {
   const navigate = useNavigate();
   const playSongs = usePlayerStore((s) => s.playSongs);
   const inputRef = useRef<HTMLInputElement>(null);
+  const offlineLibrary = useOfflineLibrary();
+  const isOnline = useOnlineStatus();
+  const offlineSearchMessage = getOfflineMessage('search');
 
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -34,7 +42,41 @@ export default function SearchScreen() {
     }
   }
 
-  const { artists, albums, songs, loading, searched } = results;
+  const offlineResults = useMemo(() => {
+    if (!debouncedQuery) {
+      return {
+        artists: [] as Artist[],
+        albums: [] as Album[],
+        songs: [] as Song[],
+        loading: false,
+        searched: false,
+      };
+    }
+
+    return {
+      artists: fuzzyFilter(
+        offlineLibrary.artistIndexes.flatMap((index) => index.artist ?? []),
+        debouncedQuery,
+        (artist) => artist.name,
+      ).slice(0, 5),
+      albums: fuzzyFilter(
+        offlineLibrary.albums,
+        debouncedQuery,
+        (album) => `${album.name} ${album.artist ?? ''}`,
+      ).slice(0, 5),
+      songs: fuzzyFilter(
+        offlineLibrary.songs,
+        debouncedQuery,
+        (song) => `${song.title} ${song.artist ?? ''} ${song.album ?? ''}`,
+      ).slice(0, 50),
+      loading: false,
+      searched: true,
+    };
+  }, [debouncedQuery, offlineLibrary.artistIndexes, offlineLibrary.albums, offlineLibrary.songs]);
+
+  const { artists, albums, songs, loading, searched } = isOnline
+    ? results
+    : offlineResults;
 
   // Auto-focus on mount
   useEffect(() => {
@@ -51,7 +93,7 @@ export default function SearchScreen() {
 
   // Perform search
   useEffect(() => {
-    if (!debouncedQuery) return;
+    if (!debouncedQuery || !isOnline) return;
 
     let cancelled = false;
 
@@ -80,7 +122,7 @@ export default function SearchScreen() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery]);
+  }, [debouncedQuery, isOnline]);
 
   const handlePlaySong = useCallback(
     (index: number) => {
@@ -97,6 +139,11 @@ export default function SearchScreen() {
 
       {/* Search input */}
       <div className="px-3 pb-4 md:px-4">
+        {!isOnline && (
+          <div className="mb-3 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-xs text-text-muted">
+            {offlineSearchMessage.body}
+          </div>
+        )}
         <div className="relative">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -141,9 +188,10 @@ export default function SearchScreen() {
 
       {/* No results */}
       {!loading && searched && !hasResults && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <p className="text-text-muted">No results found</p>
-        </div>
+        <StateMessage
+          title={isOnline ? 'No results found' : 'No offline search results'}
+          body={!isOnline ? 'Search only includes downloaded artists, albums, and songs.' : undefined}
+        />
       )}
 
       {/* Results */}

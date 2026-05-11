@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getPlaybackManager } from '../../audio/PlaybackManager';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { getOfflineMessage } from '../../utils/offlineCapability';
 import CoverArt from '../common/CoverArt';
 import FirstRunTooltip from '../common/FirstRunTooltip';
 import ProgressRing from './ProgressRing';
@@ -15,12 +17,16 @@ export default function MiniPlayer() {
   const pm = useRef(getPlaybackManager());
   const [volume, setVolume] = useState(() => Math.round(getPlaybackManager().getVolume() * 100));
   const [showVolume, setShowVolume] = useState(false);
+  const isOnline = useOnlineStatus();
 
   const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const v = Number(e.target.value);
     setVolume(v);
     pm.current.setVolume(v / 100);
   }, []);
+
+  const favoritesOfflineMessage = getOfflineMessage('favoritesMutation');
+  const visualizerOfflineMessage = getOfflineMessage('visualizer');
 
   if (!currentSong && !radioMode) return null;
 
@@ -72,8 +78,10 @@ export default function MiniPlayer() {
         <div className="hidden sm:flex items-center gap-0.5">
           {/* Star/Heart — hide for radio */}
           {!isRadio && <button
-            onClick={(e) => { e.stopPropagation(); toggleStarCurrent(); }}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary"
+            onClick={(e) => { e.stopPropagation(); void toggleStarCurrent(); }}
+            disabled={!isOnline}
+            title={!isOnline ? favoritesOfflineMessage.title : undefined}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
             aria-label={currentSong?.starred ? 'Unstar' : 'Star'}
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
@@ -154,7 +162,9 @@ export default function MiniPlayer() {
         <FirstRunTooltip id="mini-visualizer" message="Open the full-screen visualizer with WebGL effects" position="top" delay={5000}>
         <button
           onClick={(e) => { e.stopPropagation(); navigate('/visualizer'); }}
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-accent"
+          disabled={!isOnline}
+          title={!isOnline ? visualizerOfflineMessage.title : undefined}
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Visualizer"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
@@ -184,11 +194,9 @@ export default function MiniPlayer() {
           onClick={(e) => {
             e.stopPropagation();
             if (isRadio) {
-              import('../../audio/PlaybackManager').then(({ getPlaybackManager }) => {
-                const pm = getPlaybackManager();
-                if (radioPlaying) pm.pauseRadio();
-                else pm.resumeRadio();
-              });
+              const manager = getPlaybackManager();
+              if (radioPlaying) manager.pauseRadio();
+              else manager.resumeRadio();
               usePlayerStore.setState({ radioPlaying: !radioPlaying });
             } else {
               togglePlay();
@@ -213,9 +221,7 @@ export default function MiniPlayer() {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              import('../../audio/PlaybackManager').then(({ getPlaybackManager }) => {
-                getPlaybackManager().stopRadio();
-              });
+              getPlaybackManager().stopRadio();
               stopRadio();
             }}
             className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-red-400"
