@@ -1,6 +1,9 @@
 import type { ServerConfig } from '../types/subsonic';
 
-const OFFLINE_AUDIO_PATH = '/__offline_audio__';
+export const OFFLINE_AUDIO_PATH = '/__offline_audio__';
+export const AUDIO_CACHE_NAME = 'vibrdrome-audio-v1';
+export const ART_CACHE_NAME = 'vibrdrome-art-v1';
+export const REQUIRED_COVER_ART_SIZES = [64, 76, 80, 96, 112, 128, 144, 150, 240, 256, 300, 360, 400, 512];
 
 function normalizeServerOrigin(serverUrl: string): string {
   return new URL(serverUrl).origin;

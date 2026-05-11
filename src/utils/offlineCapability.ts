@@ -94,7 +94,7 @@ const OFFLINE_FEATURE_MESSAGES: Record<OfflineFeatureId, OfflineMessage> = {
   },
   lyrics: {
     title: 'Lyrics unavailable offline',
-    body: 'Lyrics only work offline if they were loaded earlier in this session.',
+    body: 'Downloaded songs keep lyrics offline once they have been saved. Other songs still need a connection.',
   },
   playlists: {
     title: 'Playlists are unavailable offline',

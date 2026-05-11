@@ -4,11 +4,16 @@ import SubsonicClient from '../api/SubsonicClient';
 import type { Song } from '../types/subsonic';
 import { useAuthStore } from './authStore';
 import { useUIStore } from './uiStore';
-import { buildAudioCacheKeyForServer, buildCacheId } from '../utils/downloadCache';
+import { AUDIO_CACHE_NAME, ART_CACHE_NAME, buildAudioCacheKeyForServer, buildCacheId } from '../utils/downloadCache';
+import { clearOfflineLyrics, deleteOfflineLyrics } from '../utils/offlineLyricsStore';
+import { clearOfflineArtStore, removeArtReference } from '../utils/offlineArtStore';
 
 const DB_NAME = 'vibrdrome_downloads';
 const LEGACY_STORE_NAME = 'cached_songs';
 const STORE_NAME = 'cached_songs_v2';
+
+export type DownloadPhase = 'pending' | 'audio' | 'coverArt' | 'lyrics' | 'finalizing' | 'done' | 'error';
+export type OptionalDownloadPhase = 'waveform' | 'artistInfo' | 'artistImage' | null;
 
 export interface CachedSong {
   cacheId: string;
@@ -33,6 +38,14 @@ export interface CachedSong {
   starred?: string;
   size: number;
   cachedAt: number;
+  requiredAssetsReady: boolean;
+  coverArtKeys?: string[];
+  lyricsStored?: boolean;
+  optionalAssets?: {
+    waveform?: boolean;
+    artistInfo?: boolean;
+    artistImage?: boolean;
+  };
 }
 
 export interface DownloadQueueItem {
@@ -45,8 +58,11 @@ export interface DownloadQueueItem {
   downloadUrl: string;
   song: Song;
   albumId?: string;
-  progress: number; // 0-1
+  progress: number;
+  requiredProgress: number;
   status: 'pending' | 'downloading' | 'done' | 'error';
+  phase: DownloadPhase;
+  optionalPhase: OptionalDownloadPhase;
 }
 
 interface DownloadState {
@@ -61,7 +77,11 @@ interface DownloadState {
   addToQueue: (songs: Song[], albumId?: string) => void;
   removeFromQueue: (cacheId: string) => void;
   updateProgress: (cacheId: string, progress: number) => void;
-  markDone: (cacheId: string, size: number) => void;
+  setPhase: (cacheId: string, phase: DownloadPhase, requiredProgress?: number) => void;
+  markDone: (cacheId: string, payload: { size: number; coverArtKeys: string[]; lyricsStored: boolean }) => void;
+  setOptionalPhase: (cacheId: string, phase: OptionalDownloadPhase) => void;
+  setOptionalAsset: (cacheId: string, asset: keyof NonNullable<CachedSong['optionalAssets']>, value: boolean) => void;
+  finishQueueItem: (cacheId: string) => void;
   markError: (cacheId: string) => void;
   setDownloading: (active: boolean) => void;
   setLibrarySyncing: (active: boolean) => void;
@@ -76,8 +96,17 @@ interface DownloadState {
 
 type LegacyCachedSong = Omit<CachedSong, 'cacheId' | 'serverId' | 'serverName' | 'serverUrl' | 'username' | 'cacheKey'>;
 
+function normalizeCachedSong(song: CachedSong): CachedSong {
+  return {
+    ...song,
+    requiredAssetsReady: song.requiredAssetsReady ?? true,
+    coverArtKeys: song.coverArtKeys ?? [],
+    optionalAssets: song.optionalAssets ? { ...song.optionalAssets } : undefined,
+  };
+}
+
 async function getDb() {
-  return openDB(DB_NAME, 2, {
+  return openDB(DB_NAME, 3, {
     upgrade(db) {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'cacheId' });
@@ -86,6 +115,15 @@ async function getDb() {
       }
     },
   });
+}
+
+async function persistCachedSong(song: CachedSong): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.put(STORE_NAME, song);
+  } catch {
+    // ignore
+  }
 }
 
 async function migrateLegacyRows(db: Awaited<ReturnType<typeof getDb>>): Promise<void> {
@@ -101,7 +139,7 @@ async function migrateLegacyRows(db: Awaited<ReturnType<typeof getDb>>): Promise
 
   const tx = db.transaction([STORE_NAME, LEGACY_STORE_NAME], 'readwrite');
   for (const row of legacyRows as LegacyCachedSong[]) {
-    const migrated: CachedSong = {
+    const migrated = normalizeCachedSong({
       ...row,
       cacheId: buildCacheId(activeServer.id, row.songId),
       serverId: activeServer.id,
@@ -109,11 +147,33 @@ async function migrateLegacyRows(db: Awaited<ReturnType<typeof getDb>>): Promise
       serverUrl: activeServer.url,
       username: activeServer.username,
       cacheKey: buildAudioCacheKeyForServer(activeServer, row.songId),
-    };
+      requiredAssetsReady: true,
+    });
     await tx.objectStore(STORE_NAME).put(migrated);
   }
   await tx.objectStore(LEGACY_STORE_NAME).clear();
   await tx.done;
+}
+
+function postServiceWorkerMessage(message: object) {
+  navigator.serviceWorker?.controller?.postMessage(message);
+}
+
+async function cleanupSharedAssets(song: CachedSong): Promise<void> {
+  await deleteOfflineLyrics(song.serverId, song.songId);
+
+  for (const assetKey of song.coverArtKeys ?? []) {
+    const removed = await removeArtReference(assetKey);
+    if (removed) {
+      postServiceWorkerMessage({ type: 'REMOVE_CACHED_ART', url: assetKey });
+      try {
+        const cache = await caches.open(ART_CACHE_NAME);
+        await cache.delete(new Request(assetKey));
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
 
 export const useDownloadStore = create<DownloadState>((set, get) => ({
@@ -137,21 +197,22 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     client.setConfig(activeServer);
 
     const newItems: DownloadQueueItem[] = songs
-      .map((song) => {
-        return {
-          cacheId: buildCacheId(activeServer.id, song.id),
-          serverId: activeServer.id,
-          serverName: activeServer.name,
-          serverUrl: activeServer.url,
-          username: activeServer.username,
-          cacheKey: buildAudioCacheKeyForServer(activeServer, song.id),
-          downloadUrl: client.stream(song.id, quality || undefined),
-          song,
-          albumId,
-          progress: 0,
-          status: 'pending' as const,
-        };
-      })
+      .map((song) => ({
+        cacheId: buildCacheId(activeServer.id, song.id),
+        serverId: activeServer.id,
+        serverName: activeServer.name,
+        serverUrl: activeServer.url,
+        username: activeServer.username,
+        cacheKey: buildAudioCacheKeyForServer(activeServer, song.id),
+        downloadUrl: client.stream(song.id, quality || undefined),
+        song,
+        albumId,
+        progress: 0,
+        requiredProgress: 0,
+        status: 'pending' as const,
+        phase: 'pending' as const,
+        optionalPhase: null,
+      }))
       .filter((item) => !existing.has(item.cacheId) && !currentQueue.some((queued) => queued.cacheId === item.cacheId));
 
     if (newItems.length > 0) {
@@ -164,19 +225,44 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
 
   updateProgress: (cacheId, progress) => {
+    const clamped = Math.max(0, Math.min(1, progress));
     set({
       queue: get().queue.map((q) =>
-        q.cacheId === cacheId ? { ...q, progress, status: 'downloading' as const } : q,
+        q.cacheId === cacheId
+          ? {
+            ...q,
+            progress: clamped,
+            requiredProgress: clamped * 0.55,
+            status: 'downloading' as const,
+            phase: 'audio' as const,
+          }
+          : q,
       ),
     });
   },
 
-  markDone: (cacheId, size) => {
+  setPhase: (cacheId, phase, requiredProgress) => {
+    set({
+      queue: get().queue.map((q) =>
+        q.cacheId === cacheId
+          ? {
+            ...q,
+            phase,
+            progress: requiredProgress ?? q.progress,
+            requiredProgress: requiredProgress ?? q.requiredProgress,
+            status: phase === 'pending' ? 'pending' as const : phase === 'done' ? 'done' as const : phase === 'error' ? 'error' as const : 'downloading' as const,
+          }
+          : q,
+      ),
+    });
+  },
+
+  markDone: (cacheId, payload) => {
     const queue = get().queue;
     const item = queue.find((q) => q.cacheId === cacheId);
     if (!item) return;
 
-    const cached: CachedSong = {
+    const cached = normalizeCachedSong({
       cacheId,
       songId: item.song.id,
       serverId: item.serverId,
@@ -197,26 +283,67 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       discNumber: item.song.discNumber,
       created: item.song.created,
       starred: item.song.starred,
-      size,
+      size: payload.size,
       cachedAt: Date.now(),
-    };
+      requiredAssetsReady: true,
+      coverArtKeys: payload.coverArtKeys,
+      lyricsStored: payload.lyricsStored,
+      optionalAssets: {},
+    });
 
     const newCached = new Map(get().cachedSongs);
-    newCached.set(cacheId, cached);
-
-    getDb().then((db) => db.put(STORE_NAME, cached)).catch(() => {});
+    const existing = newCached.get(cacheId);
+    newCached.set(cacheId, existing ? { ...existing, ...cached } : cached);
+    void persistCachedSong(newCached.get(cacheId)!);
 
     set({
-      queue: queue.filter((q) => q.cacheId !== cacheId),
+      queue: queue.map((q) =>
+        q.cacheId === cacheId
+          ? { ...q, phase: 'done', status: 'done' as const, progress: 1, requiredProgress: 1 }
+          : q,
+      ),
       cachedSongs: newCached,
-      totalCachedSize: get().totalCachedSize + size,
+      totalCachedSize: existing ? get().totalCachedSize - existing.size + payload.size : get().totalCachedSize + payload.size,
     });
+  },
+
+  setOptionalPhase: (cacheId, phase) => {
+    set({
+      queue: get().queue.map((q) =>
+        q.cacheId === cacheId
+          ? { ...q, optionalPhase: phase }
+          : q,
+      ),
+    });
+  },
+
+  setOptionalAsset: (cacheId, asset, value) => {
+    const cached = get().cachedSongs.get(cacheId);
+    if (!cached) return;
+
+    const updated = normalizeCachedSong({
+      ...cached,
+      optionalAssets: {
+        ...cached.optionalAssets,
+        [asset]: value,
+      },
+    });
+
+    const newCached = new Map(get().cachedSongs);
+    newCached.set(cacheId, updated);
+    void persistCachedSong(updated);
+
+    set({ cachedSongs: newCached });
+  },
+
+  finishQueueItem: (cacheId) => {
+    set({ queue: get().queue.filter((q) => q.cacheId !== cacheId) });
   },
 
   markError: (cacheId) => {
     set({
       queue: get().queue.map((q) =>
-        q.cacheId === cacheId ? { ...q, status: 'error' as const } : q,
+        q.cacheId === cacheId ? { ...q, status: 'error' as const, phase: 'error' as const, optionalPhase: null } : q,
       ),
     });
   },
@@ -242,12 +369,21 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       // ignore
     }
 
-    navigator.serviceWorker?.controller?.postMessage({
+    await cleanupSharedAssets(cached);
+
+    postServiceWorkerMessage({
       type: 'REMOVE_CACHED_AUDIO',
       url: cached.cacheKey,
     });
+    try {
+      const cache = await caches.open(AUDIO_CACHE_NAME);
+      await cache.delete(new Request(cached.cacheKey));
+    } catch {
+      // ignore
+    }
 
     set({
+      queue: get().queue.filter((q) => q.cacheId !== cacheId),
       cachedSongs: newCached,
       totalCachedSize: Math.max(0, get().totalCachedSize - cached.size),
     });
@@ -261,7 +397,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       }
     }).catch(() => {});
 
-    navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_AUDIO_CACHE' });
+    void clearOfflineLyrics();
+    void clearOfflineArtStore();
+
+    postServiceWorkerMessage({ type: 'CLEAR_AUDIO_CACHE' });
+    postServiceWorkerMessage({ type: 'CLEAR_ART_CACHE' });
 
     set({ cachedSongs: new Map(), totalCachedSize: 0, queue: [] });
   },
@@ -273,9 +413,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       const all = await db.getAll(STORE_NAME);
       const map = new Map<string, CachedSong>();
       let totalSize = 0;
-      for (const item of all) {
-        map.set(item.cacheId, item);
-        totalSize += item.size;
+      for (const item of all as CachedSong[]) {
+        const normalized = normalizeCachedSong(item);
+        map.set(normalized.cacheId, normalized);
+        totalSize += normalized.size;
       }
       set({ cachedSongs: map, totalCachedSize: totalSize });
     } catch {

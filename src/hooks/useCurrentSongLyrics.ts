@@ -1,77 +1,119 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getSubsonicClient } from '../api/SubsonicClient';
-import { useOnlineStatus } from './useOnlineStatus';
+import { useAuthStore } from '../stores/authStore';
+import { useDownloadStore } from '../stores/downloadStore';
 import type { StructuredLyrics } from '../types/subsonic';
+import { buildCacheId } from '../utils/downloadCache';
+import { getOfflineLyrics, putOfflineLyrics } from '../utils/offlineLyricsStore';
+import { useOnlineStatus } from './useOnlineStatus';
 
 const lyricsSessionCache = new Map<string, StructuredLyrics>();
 
 type LyricsStatus = 'idle' | 'loading' | 'ready' | 'error' | 'offline';
 
+function selectLyrics(results: StructuredLyrics[]): StructuredLyrics | null {
+  if (results.length === 0) return null;
+  return results.find((item) => item.synced) ?? results[0];
+}
+
 export function useCurrentSongLyrics(songId?: string | null) {
   const isOnline = useOnlineStatus();
-  const [loadedSongId, setLoadedSongId] = useState<string | null>(null);
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const cacheId = useMemo(
+    () => (activeServerId && songId ? buildCacheId(activeServerId, songId) : null),
+    [activeServerId, songId],
+  );
+  const cachedSong = useDownloadStore((s) => (cacheId ? s.cachedSongs.get(cacheId) : undefined));
+  const cacheKey = activeServerId && songId ? `${activeServerId}:${songId}` : null;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [loadedLyrics, setLoadedLyrics] = useState<StructuredLyrics | null>(null);
   const [loadError, setLoadError] = useState(false);
 
-  const cachedLyrics = songId ? lyricsSessionCache.get(songId) ?? null : null;
-  const shouldFetch = !!songId && isOnline && songId !== loadedSongId;
+  const cachedLyrics = cacheKey ? lyricsSessionCache.get(cacheKey) ?? null : null;
 
   useEffect(() => {
-    if (!songId || !isOnline || !shouldFetch) return;
+    if (!songId || !activeServerId || !cacheKey) return;
 
     let cancelled = false;
 
-    getSubsonicClient()
-      .getLyricsBySongId(songId)
-      .then((results) => {
+    const load = async () => {
+      const persisted = await getOfflineLyrics(activeServerId, songId);
+      if (cancelled) return;
+
+      if (persisted) {
+        lyricsSessionCache.set(cacheKey, persisted);
+        setLoadedKey(cacheKey);
+        setLoadedLyrics(persisted);
+        setLoadError(false);
+        return;
+      }
+
+      if (!isOnline) {
+        setLoadedKey(cacheKey);
+        setLoadedLyrics(null);
+        setLoadError(!!cachedSong && cachedSong.lyricsStored === false);
+        return;
+      }
+
+      try {
+        const results = await getSubsonicClient().getLyricsBySongId(songId);
         if (cancelled) return;
-        if (results.length === 0) {
-          setLoadedSongId(songId);
+
+        const nextLyrics = selectLyrics(results);
+        if (!nextLyrics) {
+          setLoadedKey(cacheKey);
           setLoadedLyrics(null);
           setLoadError(true);
           return;
         }
 
-        const nextLyrics = results.find((item) => item.synced) ?? results[0];
-        lyricsSessionCache.set(songId, nextLyrics);
-        setLoadedSongId(songId);
+        await putOfflineLyrics(activeServerId, songId, nextLyrics);
+        if (cancelled) return;
+
+        lyricsSessionCache.set(cacheKey, nextLyrics);
+        setLoadedKey(cacheKey);
         setLoadedLyrics(nextLyrics);
         setLoadError(false);
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error('Failed to load lyrics:', err);
         if (cancelled) return;
-        setLoadedSongId(songId);
+        setLoadedKey(cacheKey);
         setLoadedLyrics(cachedLyrics);
         setLoadError(!cachedLyrics);
-      });
+      }
+    };
+
+    void load();
 
     return () => {
       cancelled = true;
     };
-  }, [cachedLyrics, isOnline, shouldFetch, songId]);
+  }, [activeServerId, cacheKey, cachedLyrics, cachedSong, isOnline, songId]);
 
-  if (!songId) {
+  if (!songId || !activeServerId || !cacheKey) {
     return { lyrics: null, status: 'idle' as LyricsStatus };
   }
 
-  if (!isOnline) {
-    return {
-      lyrics: cachedLyrics,
-      status: cachedLyrics ? ('ready' as LyricsStatus) : ('offline' as LyricsStatus),
-    };
+  const effectiveLyrics = loadedKey === cacheKey ? loadedLyrics : cachedLyrics;
+
+  if (effectiveLyrics) {
+    return { lyrics: effectiveLyrics, status: 'ready' as LyricsStatus };
   }
 
-  if (shouldFetch) {
+  if (cachedSong?.lyricsStored === false) {
+    return { lyrics: null, status: 'error' as LyricsStatus };
+  }
+
+  if (!isOnline) {
+    return { lyrics: null, status: 'offline' as LyricsStatus };
+  }
+
+  if (loadedKey !== cacheKey) {
     return { lyrics: cachedLyrics, status: 'loading' as LyricsStatus };
   }
 
-  if (loadedSongId === songId && loadedLyrics) {
-    return { lyrics: loadedLyrics, status: 'ready' as LyricsStatus };
-  }
-
   return {
-    lyrics: cachedLyrics,
+    lyrics: null,
     status: loadError ? ('error' as LyricsStatus) : ('loading' as LyricsStatus),
   };
 }

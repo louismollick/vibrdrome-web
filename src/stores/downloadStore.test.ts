@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from './authStore';
 import { useDownloadStore } from './downloadStore';
+import { deleteOfflineLyrics } from '../utils/offlineLyricsStore';
+import { removeArtReference } from '../utils/offlineArtStore';
 
 const dbMock = {
   put: vi.fn(async () => {}),
@@ -15,6 +17,16 @@ vi.mock('idb', () => ({
   openDB: vi.fn(async () => dbMock),
 }));
 
+vi.mock('../utils/offlineLyricsStore', () => ({
+  clearOfflineLyrics: vi.fn(async () => {}),
+  deleteOfflineLyrics: vi.fn(async () => {}),
+}));
+
+vi.mock('../utils/offlineArtStore', () => ({
+  clearOfflineArtStore: vi.fn(async () => {}),
+  removeArtReference: vi.fn(async () => true),
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
@@ -26,6 +38,15 @@ beforeEach(() => {
       controller: {
         postMessage: vi.fn(),
       },
+    },
+  });
+
+  Object.defineProperty(globalThis, 'caches', {
+    configurable: true,
+    value: {
+      open: vi.fn(async () => ({
+        delete: vi.fn(async () => true),
+      })),
     },
   });
 
@@ -82,6 +103,7 @@ describe('downloadStore', () => {
           title: 'Song 1',
           size: 123,
           cachedAt: Date.now(),
+          requiredAssetsReady: true,
         }],
       ]),
     });
@@ -112,6 +134,7 @@ describe('downloadStore', () => {
           title: 'Song 1',
           size: 123,
           cachedAt: Date.now(),
+          requiredAssetsReady: true,
         }],
       ]),
       totalCachedSize: 123,
@@ -124,5 +147,45 @@ describe('downloadStore', () => {
       url: 'http://localhost/__offline_audio__?server=https%3A%2F%2Fmusic.example.com&user=alice&id=song-1',
     });
     expect(useDownloadStore.getState().cachedSongs.size).toBe(0);
+  });
+
+  it('removes persisted lyrics and shared cover art references when cached audio is deleted', async () => {
+    const postMessage = vi.fn();
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        controller: { postMessage },
+      },
+    });
+
+    useDownloadStore.setState({
+      cachedSongs: new Map([
+        ['server-1:song-1', {
+          cacheId: 'server-1:song-1',
+          songId: 'song-1',
+          serverId: 'server-1',
+          serverName: 'Primary',
+          serverUrl: 'https://music.example.com',
+          username: 'alice',
+          cacheKey: 'http://localhost/__offline_audio__?server=https%3A%2F%2Fmusic.example.com&user=alice&id=song-1',
+          title: 'Song 1',
+          size: 123,
+          cachedAt: Date.now(),
+          requiredAssetsReady: true,
+          lyricsStored: true,
+          coverArtKeys: ['https://music.example.com/rest/getCoverArt?id=art-1&size=300'],
+        }],
+      ]),
+      totalCachedSize: 123,
+    });
+
+    await useDownloadStore.getState().removeFromCache('server-1:song-1');
+
+    expect(deleteOfflineLyrics).toHaveBeenCalledWith('server-1', 'song-1');
+    expect(removeArtReference).toHaveBeenCalledWith('https://music.example.com/rest/getCoverArt?id=art-1&size=300');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'REMOVE_CACHED_ART',
+      url: 'https://music.example.com/rest/getCoverArt?id=art-1&size=300',
+    });
   });
 });

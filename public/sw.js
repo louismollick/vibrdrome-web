@@ -178,6 +178,14 @@ self.addEventListener('message', (event) => {
     caches.delete(AUDIO_CACHE);
   }
 
+  if (type === 'REMOVE_CACHED_ART') {
+    caches.open(ART_CACHE).then((cache) => cache.delete(new Request(url)));
+  }
+
+  if (type === 'CLEAR_ART_CACHE') {
+    caches.delete(ART_CACHE);
+  }
+
   if (type === 'GET_CACHE_SIZE') {
     caches.open(AUDIO_CACHE).then(async (cache) => {
       const keys = await cache.keys();
