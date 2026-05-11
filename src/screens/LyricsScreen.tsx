@@ -9,6 +9,7 @@ import { Header, LoadingSpinner, StateMessage } from '../components/common';
 import YomitanOverlay from '../components/lyrics/YomitanOverlay';
 import { useCurrentSongLyrics } from '../hooks/useCurrentSongLyrics';
 import { getOfflineMessage } from '../utils/offlineCapability';
+import { getOfflineTokenizedLyrics, putOfflineTokenizedLyrics } from '../utils/offlineLyricsStore';
 import {
   buildEnabledDictionaryMap,
   getInstalledDictionaries,
@@ -205,6 +206,13 @@ export default function LyricsScreen() {
     let cancelled = false;
 
     const tokenizeLines = async () => {
+      const persistedTokenizedLyrics = await getOfflineTokenizedLyrics(
+        activeServerId,
+        currentSong.id,
+        dictionaryPreferenceFingerprint,
+      );
+      if (cancelled) return;
+
       const orderedIndices = getTokenizationOrder(
         lyrics.line!,
         lyrics.synced ? dictionaryPriorityLineIndexRef.current : -1,
@@ -220,9 +228,10 @@ export default function LyricsScreen() {
           line.value,
           dictionaryPreferenceFingerprint,
         );
-        const cachedTokens = tokenCacheRef.current.get(key);
+        const cachedTokens = tokenCacheRef.current.get(key) ?? persistedTokenizedLyrics?.[line.value];
 
         if (cachedTokens) {
+          tokenCacheRef.current.set(key, cachedTokens);
           cachedLines[index] = cachedTokens;
           continue;
         }
@@ -248,6 +257,7 @@ export default function LyricsScreen() {
       }
 
       const batchSize = 1;
+      const nextPersistedTokenizedLyrics: Record<string, YomitanToken[]> = {};
 
       for (let offset = 0; offset < workQueue.length; offset += batchSize) {
         const batch = workQueue.slice(offset, offset + batchSize);
@@ -255,7 +265,7 @@ export default function LyricsScreen() {
           batch.map(async ({ index, line, key }) => {
             const tokens = await tokenizeText(line.value, enabledDictionaryMap);
             tokenCacheRef.current.set(key, tokens);
-            return { index, tokens };
+            return { index, lineValue: line.value, tokens };
           }),
         );
 
@@ -272,6 +282,11 @@ export default function LyricsScreen() {
         });
 
         completed += resolvedBatch.length;
+
+        for (const { lineValue, tokens } of resolvedBatch) {
+          nextPersistedTokenizedLyrics[lineValue] = tokens;
+        }
+
         setTokenizationProgress({
           status: completed >= total ? 'ready' : 'loading',
           completed,
@@ -281,6 +296,15 @@ export default function LyricsScreen() {
         if (completed < total) {
           await new Promise((resolve) => window.setTimeout(resolve, 0));
         }
+      }
+
+      if (Object.keys(nextPersistedTokenizedLyrics).length > 0) {
+        await putOfflineTokenizedLyrics(
+          activeServerId,
+          currentSong.id,
+          dictionaryPreferenceFingerprint,
+          nextPersistedTokenizedLyrics,
+        );
       }
     };
 

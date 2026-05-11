@@ -62,11 +62,11 @@ export default function YomitanOverlay({
     let cancelled = false;
 
     const runLookup = async () => {
-      setLookupState({
-        status: 'loading',
-        result: null,
+      setLookupState((current) => ({
+        status: current.result?.entries.length ? 'ready' : 'idle',
+        result: current.result?.entries.length ? current.result : null,
         message: null,
-      });
+      }));
 
       return await lookupTerm(selectedToken.term || selectedToken.text, enabledDictionaryMap);
     };
@@ -175,15 +175,11 @@ export default function YomitanOverlay({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
-          {lookupState.status === 'loading' && (
-            <p className="text-sm text-text-secondary">Looking up {selectedToken.text}…</p>
-          )}
-
           {lookupState.message && (
             <p className="text-sm text-text-secondary">{lookupState.message}</p>
           )}
 
-          {lookupState.status === 'ready' && lookupState.result && lookupState.result.entries.length > 0 && (
+          {lookupState.result && lookupState.result.entries.length > 0 && (
             <YomitanResults entries={lookupState.result.entries} dictionaries={dictionaries} />
           )}
         </div>
