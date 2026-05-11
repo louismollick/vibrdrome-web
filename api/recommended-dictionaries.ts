@@ -1,5 +1,3 @@
-import { ALLOWED_RECOMMENDED_DICTIONARY_URLS } from '../src/utils/yomitan/recommendedDictionaries';
-
 type RequestLike = {
   query?: Record<string, string | string[] | undefined>;
 };
@@ -13,6 +11,13 @@ type ResponseLike = {
   write: (chunk: Uint8Array) => void;
   statusCode: number;
 };
+
+const ALLOWED_RECOMMENDED_DICTIONARY_URLS = new Set([
+  'https://github.com/stephenmk/stephenmk.github.io/releases/latest/download/jitendex-yomitan.zip',
+  'https://github.com/yomidevs/jmdict-yomitan/releases/latest/download/KANJIDIC_english.zip',
+  'https://github.com/Kuuuube/yomitan-dictionaries/raw/main/dictionaries/JPDB_v2.2_Frequency_Kana_2024-10-13.zip',
+  'https://github.com/MarvNC/yomichan-dictionaries/raw/master/dl/%5BKanji%5D%20JPDB%20Kanji.zip',
+]);
 
 function getQueryValue(value: string | string[] | undefined) {
   if (typeof value === 'string') return value;
