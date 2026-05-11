@@ -3,7 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
 import type { Album, AlbumListType, Genre } from '../types/subsonic';
-import { Header, AlbumCard, LoadingSpinner } from '../components/common';
+import { Header, AlbumCard, LoadingSpinner, StateMessage } from '../components/common';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
+import { filterOfflineAlbums } from '../utils/offlineLibrary';
 
 const PAGE_SIZE = 40;
 
@@ -15,11 +17,13 @@ export default function AlbumsListScreen() {
   const toYear = searchParams.get('toYear') ? Number(searchParams.get('toYear')) : undefined;
   const title = searchParams.get('title') || 'Albums';
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
+  const offlineLibrary = useOfflineLibrary();
 
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
   const offsetRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -32,15 +36,21 @@ export default function AlbumsListScreen() {
       const page = await client.getAlbumList2(type, PAGE_SIZE, offset, genre, fromYear, toYear, activeFolderId ?? undefined);
       if (page.length < PAGE_SIZE) setHasMore(false);
 
+      setUsingOfflineData(false);
       setAlbums((prev) => (isInitial ? page : [...prev, ...page]));
       offsetRef.current = offset + page.length;
     } catch (err) {
       console.error('Failed to load albums:', err);
+      const offlineAlbums = filterOfflineAlbums(offlineLibrary.albums, { type, genre, fromYear, toYear });
+      setUsingOfflineData(true);
+      setAlbums(offlineAlbums);
+      setHasMore(false);
+      offsetRef.current = offlineAlbums.length;
     } finally {
       if (isInitial) setLoading(false);
       else setLoadingMore(false);
     }
-  }, [type, genre, fromYear, toYear, activeFolderId]);
+  }, [type, genre, fromYear, toYear, activeFolderId, offlineLibrary.albums]);
 
   useEffect(() => {
     offsetRef.current = 0;
@@ -79,9 +89,11 @@ export default function AlbumsListScreen() {
     if (showFilter && genres.length === 0) {
       getSubsonicClient().getGenres().then((g) => {
         setGenres(g.sort((a, b) => a.value.localeCompare(b.value)));
-      }).catch(() => { /* silently fail */ });
+      }).catch(() => {
+        setGenres(offlineLibrary.genres);
+      });
     }
-  }, [showFilter, genres.length]);
+  }, [showFilter, genres.length, offlineLibrary.genres]);
 
   if (loading) {
     return (
@@ -109,6 +121,12 @@ export default function AlbumsListScreen() {
   return (
     <div className="flex h-full flex-col bg-bg-primary">
       <Header title={`${title}${filteredAlbums.length > 0 ? ` (${filteredAlbums.length})` : ''}`} showBack />
+
+      {usingOfflineData && (
+        <div className="px-4 pb-3 text-xs text-text-muted">
+          Showing downloaded albums from offline cache.
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
@@ -173,7 +191,10 @@ export default function AlbumsListScreen() {
         )}
 
         {!hasMore && albums.length === 0 && (
-          <p className="py-8 text-center text-text-muted">No albums found.</p>
+          <StateMessage
+            title={usingOfflineData ? 'No downloaded albums available offline' : 'No albums found'}
+            body={usingOfflineData ? 'Download albums while online to browse them here later.' : undefined}
+          />
         )}
       </div>
     </div>

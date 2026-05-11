@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { getSubsonicClient } from '../api/SubsonicClient';
+import { getPlaybackManager } from '../audio/PlaybackManager';
 import type { Song } from '../types/subsonic';
 
 const QUEUE_KEY = 'vibrdrome_queue';
@@ -152,9 +154,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
   playSongs: (songs, startIndex = 0) => {
     // Stop radio if playing
     if (get().radioMode) {
-      import('../audio/PlaybackManager').then(({ getPlaybackManager }) => {
-        getPlaybackManager().stopRadio();
-      });
+      getPlaybackManager().stopRadio();
     }
     const state: Partial<PlaybackState> = {
       queue: songs,
@@ -336,9 +336,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
   setDuration: (ms) => set({ durationMs: ms }),
   seek: (ms) => {
     set({ positionMs: ms });
-    import('../audio/PlaybackManager').then(({ getPlaybackManager }) => {
-      getPlaybackManager().seek(ms);
-    });
+    getPlaybackManager().seek(ms);
   },
 
   toggleShuffle: () => {
@@ -390,6 +388,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
     starBusy = true;
     const { currentSong, queue, currentIndex } = get();
     if (!currentSong) { starBusy = false; return; }
+    if (!navigator.onLine) { starBusy = false; return; }
 
     const starred = !currentSong.starred;
 
@@ -402,7 +401,6 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
     set({ currentSong: updatedSong, queue: updatedQueue });
 
     try {
-      const { getSubsonicClient } = await import('../api/SubsonicClient');
       const client = getSubsonicClient();
       if (starred) {
         await client.star(currentSong.id);

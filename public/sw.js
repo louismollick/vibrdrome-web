@@ -1,18 +1,129 @@
-const SHELL_CACHE = 'vibrdrome-shell-v2';
+const SHELL_CACHE = 'vibrdrome-shell-v3';
+const STATIC_CACHE = 'vibrdrome-static-v1';
 const AUDIO_CACHE = 'vibrdrome-audio-v1';
 const ART_CACHE = 'vibrdrome-art-v1';
-const SHELL_URLS = ['/', '/index.html'];
+const APP_SHELL_URL = '/index.html';
+const SHELL_URLS = [APP_SHELL_URL, '/manifest.json', '/favicon.svg', '/icons/icon.svg'];
 const MAX_AUDIO_CACHE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+const STATIC_DESTINATIONS = new Set(['script', 'style', 'font', 'worker', 'image']);
+
+function isCacheableStaticAsset(request, url) {
+  if (request.method !== 'GET') return false;
+
+  if (url.origin === self.location.origin) {
+    return (
+      STATIC_DESTINATIONS.has(request.destination) ||
+      url.pathname.startsWith('/assets/') ||
+      url.pathname.startsWith('/icons/') ||
+      url.pathname === '/manifest.json' ||
+      url.pathname === '/favicon.svg'
+    );
+  }
+
+  return (
+    url.origin === 'https://fonts.googleapis.com' ||
+    url.origin === 'https://fonts.gstatic.com'
+  );
+}
+
+async function cacheStaticResponse(request, response) {
+  if (!response || !response.ok) return response;
+
+  const cache = await caches.open(STATIC_CACHE);
+  cache.put(request, response.clone());
+  return response;
+}
+
+function buildAudioCacheKey(requestUrl) {
+  const url = new URL(requestUrl);
+  const songId = url.searchParams.get('id');
+  const username = url.searchParams.get('u');
+  if (!songId || !username) return null;
+
+  const params = new URLSearchParams({
+    server: url.origin,
+    user: username,
+    id: songId,
+  });
+  return `${self.location.origin}/__offline_audio__?${params.toString()}`;
+}
+
+function buildCoverArtCacheKey(requestUrl) {
+  const url = new URL(requestUrl);
+  const coverArtId = url.searchParams.get('id');
+  if (!coverArtId) return requestUrl;
+
+  const params = new URLSearchParams({
+    server: url.origin,
+    id: coverArtId,
+  });
+
+  const username = url.searchParams.get('u');
+
+  if (username) params.set('user', username);
+
+  return `${self.location.origin}/__offline_cover_art__?${params.toString()}`;
+}
+
+function buildLegacyCoverArtCacheKey(requestUrl, size) {
+  const url = new URL(requestUrl);
+  const coverArtId = url.searchParams.get('id');
+  if (!coverArtId) return requestUrl;
+
+  const params = new URLSearchParams({
+    server: url.origin,
+    id: coverArtId,
+  });
+
+  const username = url.searchParams.get('u');
+  if (username) params.set('user', username);
+  if (size) params.set('size', size);
+
+  return `${self.location.origin}/__offline_cover_art__?${params.toString()}`;
+}
+
+async function matchLegacyCoverArt(cache, requestUrl) {
+  const requestedUrl = new URL(requestUrl);
+  const requestedSize = requestedUrl.searchParams.get('size');
+  const candidateSizes = [
+    requestedSize,
+    '512',
+    '400',
+    '360',
+    '300',
+    '256',
+    '240',
+    '150',
+    '144',
+    '128',
+    '112',
+    '96',
+    '80',
+    '76',
+    '72',
+    '64',
+  ].filter(Boolean);
+
+  for (const size of candidateSizes) {
+    const cached = await cache.match(new Request(buildLegacyCoverArtCacheKey(requestUrl, size)));
+    if (cached) return cached;
+  }
+
+  return null;
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS))
+    (async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      await cache.addAll(SHELL_URLS);
+    })()
   );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-  const keepCaches = [SHELL_CACHE, AUDIO_CACHE, ART_CACHE];
+  const keepCaches = [SHELL_CACHE, STATIC_CACHE, AUDIO_CACHE, ART_CACHE];
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => !keepCaches.includes(k)).map((k) => caches.delete(k)))
@@ -24,10 +135,46 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // App shell — network first, fallback to cache
+  // App shell — serve index.html for all SPA navigations to avoid redirect responses.
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match('/index.html'))
+      (async () => {
+        const shellRequest = new Request(APP_SHELL_URL, { cache: 'no-store' });
+        const shellCache = await caches.open(SHELL_CACHE);
+        const cachedShell = await shellCache.match(APP_SHELL_URL);
+
+        try {
+          const response = await fetch(shellRequest);
+          if (response.ok && !response.redirected) {
+            shellCache.put(APP_SHELL_URL, response.clone());
+          }
+          return response;
+        } catch {
+          if (cachedShell) return cachedShell;
+          return Response.error();
+        }
+      })()
+    );
+    return;
+  }
+
+  // Built app assets and fonts — stale while revalidate for offline reload support.
+  if (isCacheableStaticAsset(event.request, url)) {
+    event.respondWith(
+      (async () => {
+        const cached = await caches.match(event.request);
+        const networkFetch = fetch(event.request)
+          .then((response) => cacheStaticResponse(event.request, response))
+          .catch(() => null);
+
+        if (cached) {
+          event.waitUntil(networkFetch);
+          return cached;
+        }
+
+        const networkResponse = await networkFetch;
+        return networkResponse || Response.error();
+      })()
     );
     return;
   }
@@ -35,10 +182,15 @@ self.addEventListener('fetch', (event) => {
   // Audio streams — cache first if available (for offline playback)
   if (url.pathname.includes('/rest/stream')) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
-        if (cached) return cached;
+      (async () => {
+        const cacheKey = buildAudioCacheKey(event.request.url);
+        if (cacheKey) {
+          const cache = await caches.open(AUDIO_CACHE);
+          const cached = await cache.match(new Request(cacheKey));
+          if (cached) return cached;
+        }
         return fetch(event.request);
-      })
+      })()
     );
     return;
   }
@@ -46,16 +198,26 @@ self.addEventListener('fetch', (event) => {
   // Cover art — cache first with network fallback
   if (url.pathname.includes('/rest/getCoverArt')) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
+      (async () => {
+        const cacheKey = buildCoverArtCacheKey(event.request.url);
+        const cache = await caches.open(ART_CACHE);
+        const cached = await cache.match(new Request(cacheKey));
         if (cached) return cached;
+
+        const legacyCached = await matchLegacyCoverArt(cache, event.request.url);
+        if (legacyCached) {
+          cache.put(new Request(cacheKey), legacyCached.clone());
+          return legacyCached;
+        }
+
         return fetch(event.request).then((response) => {
           if (response.ok) {
             const clone = response.clone();
-            caches.open(ART_CACHE).then((cache) => cache.put(event.request, clone));
+            cache.put(new Request(cacheKey), clone);
           }
           return response;
         }).catch(() => new Response('', { status: 404 }));
-      })
+      })()
     );
     return;
   }
@@ -88,6 +250,14 @@ self.addEventListener('message', (event) => {
 
   if (type === 'CLEAR_AUDIO_CACHE') {
     caches.delete(AUDIO_CACHE);
+  }
+
+  if (type === 'REMOVE_CACHED_ART') {
+    caches.open(ART_CACHE).then((cache) => cache.delete(new Request(url)));
+  }
+
+  if (type === 'CLEAR_ART_CACHE') {
+    caches.delete(ART_CACHE);
   }
 
   if (type === 'GET_CACHE_SIZE') {

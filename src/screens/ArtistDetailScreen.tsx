@@ -4,14 +4,22 @@ import { getSubsonicClient } from '../api/SubsonicClient';
 import { usePlayerStore } from '../stores/playerStore';
 import { shareUrl } from '../utils/share';
 import { useArtistInfo } from '../hooks/useArtistInfo';
-import type { Artist, Song } from '../types/subsonic';
+import type { Album, Artist, Song } from '../types/subsonic';
 import { useArtistImage } from '../hooks/useArtistImage';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { Header, AlbumCard, CoverArt, LoadingSpinner } from '../components/common';
+import { getOfflineMessage } from '../utils/offlineCapability';
 
 export default function ArtistDetailScreen() {
   const { artistId } = useParams<{ artistId: string }>();
   const [artist, setArtist] = useState<Artist | null>(null);
   const [loading, setLoading] = useState(true);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+  const offlineLibrary = useOfflineLibrary();
+  const isOnline = useOnlineStatus();
+  const shareOfflineMessage = getOfflineMessage('share');
+  const artistRadioOfflineMessage = getOfflineMessage('artistRadio');
 
   useEffect(() => {
     if (!artistId) return;
@@ -19,18 +27,35 @@ export default function ArtistDetailScreen() {
       try {
         const client = getSubsonicClient();
         const data = await client.getArtist(artistId);
+        setUsingOfflineData(false);
         setArtist(data);
       } catch (err) {
         console.error('Failed to load artist:', err);
+        const artistEntry = offlineLibrary.artistIndexes
+          .flatMap((index) => index.artist ?? [])
+          .find((item) => item.id === artistId);
+        const artistAlbums = offlineLibrary.albums.filter((album) => album.artistId === artistId);
+        setUsingOfflineData(true);
+        setArtist(
+          artistEntry
+            ? {
+                id: artistEntry.id,
+                name: artistEntry.name,
+                coverArt: artistEntry.coverArt,
+                albumCount: artistEntry.albumCount,
+                album: artistAlbums as Album[],
+              }
+            : null,
+        );
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [artistId]);
+  }, [artistId, offlineLibrary.albums, offlineLibrary.artistIndexes]);
 
   const handleRadio = async () => {
-    if (!artist) return;
+    if (!artist || !isOnline) return;
     try {
       const client = getSubsonicClient();
       const [similar, top] = await Promise.all([
@@ -86,7 +111,9 @@ export default function ArtistDetailScreen() {
           <>
           <button
             onClick={() => shareUrl(artist.name)}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
+            disabled={!isOnline}
+            title={!isOnline ? shareOfflineMessage.title : undefined}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Share"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
@@ -95,7 +122,9 @@ export default function ArtistDetailScreen() {
           </button>
           <button
             onClick={handleRadio}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
+            disabled={!isOnline}
+            title={!isOnline ? artistRadioOfflineMessage.title : undefined}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Artist radio"
           >
             <svg
@@ -118,8 +147,14 @@ export default function ArtistDetailScreen() {
       />
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {usingOfflineData && (
+          <div className="pb-3 text-xs text-text-muted">
+            Showing downloaded artist from offline cache.
+          </div>
+        )}
+
         {/* Artist bio from Last.fm */}
-        <ArtistBio artistName={artist.name} />
+        {isOnline && <ArtistBio artistName={artist.name} />}
 
         {/* Albums */}
         <h3 className="mb-3 mt-2 text-sm font-semibold uppercase tracking-wider text-text-muted">Discography</h3>

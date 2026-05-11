@@ -1,55 +1,20 @@
-import { useState, useEffect, useRef } from 'react';
-import { getSubsonicClient } from '../api/SubsonicClient';
+import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '../stores/playerStore';
 import { getPlaybackManager } from '../audio/PlaybackManager';
-import type { StructuredLyrics, LyricLine } from '../types/subsonic';
-import { Header, LoadingSpinner } from '../components/common';
+import type { LyricLine } from '../types/subsonic';
+import { Header, LoadingSpinner, StateMessage } from '../components/common';
+import { useCurrentSongLyrics } from '../hooks/useCurrentSongLyrics';
+import { getOfflineMessage } from '../utils/offlineCapability';
 
 export default function LyricsScreen() {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const positionMs = usePlayerStore((s) => s.positionMs);
-
-  const [lyrics, setLyrics] = useState<StructuredLyrics | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const { lyrics, status } = useCurrentSongLyrics(currentSong?.id);
 
   const currentLineRef = useRef<HTMLButtonElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLineIdxRef = useRef(-1);
-
-  // Load lyrics when song changes
-  useEffect(() => {
-    if (!currentSong?.id) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear lyrics when no song
-      setLyrics(null);
-      return;
-    }
-
-    setLoading(true);
-    setError(false);
-
-    const load = async () => {
-      try {
-        const client = getSubsonicClient();
-        const results = await client.getLyricsBySongId(currentSong.id);
-        if (results.length > 0) {
-          // Prefer synced lyrics
-          const synced = results.find((l) => l.synced);
-          setLyrics(synced ?? results[0]);
-        } else {
-          setLyrics(null);
-          setError(true);
-        }
-      } catch (err) {
-        console.error('Failed to load lyrics:', err);
-        setLyrics(null);
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [currentSong?.id]);
+  const offlineLyricsMessage = getOfflineMessage('lyrics');
 
   // Auto-scroll only when the current line index changes
   useEffect(() => {
@@ -94,21 +59,21 @@ export default function LyricsScreen() {
       )}
 
       <div ref={containerRef} className="flex-1 overflow-y-auto px-4 pb-20">
-        {loading && <LoadingSpinner />}
+        {status === 'loading' && <LoadingSpinner />}
 
-        {!loading && !currentSong && (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-text-muted">No song playing</p>
-          </div>
+        {status !== 'loading' && !currentSong && (
+          <StateMessage title="No song playing" className="h-full" />
         )}
 
-        {!loading && currentSong && error && (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-text-muted">No lyrics available</p>
-          </div>
+        {status === 'offline' && currentSong && (
+          <StateMessage title={offlineLyricsMessage.title} body={offlineLyricsMessage.body} className="h-full" />
         )}
 
-        {!loading && lyrics && lyrics.synced && lyrics.line && (() => {
+        {status === 'error' && currentSong && (
+          <StateMessage title="No lyrics available" className="h-full" />
+        )}
+
+        {status === 'ready' && lyrics && lyrics.synced && lyrics.line && (() => {
           const currentIdx = getCurrentLineIndex(lyrics.line!);
           return (
           <div className="space-y-3 py-4">
@@ -141,7 +106,7 @@ export default function LyricsScreen() {
           );
         })()}
 
-        {!loading && lyrics && !lyrics.synced && lyrics.line && (
+        {status === 'ready' && lyrics && !lyrics.synced && lyrics.line && (
           <div className="space-y-2 py-4">
             {lyrics.line.map((line, index) => (
               <p key={index} className="text-base text-text-primary">

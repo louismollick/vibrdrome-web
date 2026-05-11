@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/subsonic';
 import { getSubsonicClient } from '../../api/SubsonicClient';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { usePlayerStore } from '../../stores/playerStore';
+import { getOfflineMessage } from '../../utils/offlineCapability';
 import ContextMenu from './ContextMenu';
 
 interface SongRowProps {
@@ -29,10 +31,14 @@ export default function SongRow({
 }: SongRowProps) {
   const navigate = useNavigate();
   const [starred, setStarred] = useState(!!song.starred);
+  const isOnline = useOnlineStatus();
 
   const displayNumber = showTrackNumber ? song.track : index !== undefined ? index + 1 : undefined;
+  const favoritesOfflineMessage = getOfflineMessage('favoritesMutation');
+  const artistRadioOfflineMessage = getOfflineMessage('artistRadio');
 
   const handleStarToggle = async () => {
+    if (!isOnline) return;
     const client = getSubsonicClient();
     try {
       if (starred) {
@@ -74,10 +80,12 @@ export default function SongRow({
     {
       label: starred ? 'Unstar' : 'Star',
       onClick: handleStarToggle,
+      disabled: !isOnline,
     },
     {
-      label: 'Song Radio',
+      label: !isOnline ? artistRadioOfflineMessage.title : 'Song Radio',
       onClick: async () => {
+        if (!isOnline) return;
         try {
           const client = getSubsonicClient();
           const result = await client.getSimilarSongs2(song.id, 50);
@@ -88,6 +96,7 @@ export default function SongRow({
           // silently fail
         }
       },
+      disabled: !isOnline,
     },
   ];
 
@@ -129,6 +138,7 @@ export default function SongRow({
           <button
             className="flex h-8 w-8 items-center justify-center rounded-full text-text-muted opacity-0 transition-all hover:bg-bg-secondary hover:text-text-primary group-hover:opacity-100"
             aria-label="More options"
+            title={!isOnline ? `${favoritesOfflineMessage.title} ${favoritesOfflineMessage.body}` : undefined}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
