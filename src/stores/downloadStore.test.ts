@@ -72,6 +72,9 @@ beforeEach(() => {
     cachedSongs: new Map(),
     totalCachedSize: 0,
     isDownloading: false,
+    isLibrarySyncing: false,
+    lastLibrarySyncAt: null,
+    librarySyncError: null,
   });
 });
 
