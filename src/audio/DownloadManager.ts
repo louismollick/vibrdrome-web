@@ -9,8 +9,8 @@ import { useAuthStore } from '../stores/authStore';
 import { useDownloadStore } from '../stores/downloadStore';
 import { useUIStore } from '../stores/uiStore';
 import type { Song, StructuredLyrics } from '../types/subsonic';
-import { addArtReference, removeArtReference } from '../utils/offlineArtStore';
-import { deleteOfflineLyrics, putOfflineLyrics } from '../utils/offlineLyricsStore';
+import { addArtReference, hasArtReference } from '../utils/offlineArtStore';
+import { putOfflineLyrics } from '../utils/offlineLyricsStore';
 import { getCachedArtist, setCachedArtist } from '../utils/lastfmCache';
 import { resolveArtistImage } from '../utils/artistImageResolver';
 import { extractWaveform } from './waveformExtractor';
@@ -53,31 +53,24 @@ class DownloadManager {
     if (!item) return;
 
     let audioStored = false;
-    let lyricsStored = false;
-    const coverArtKeys: string[] = [];
 
     try {
       const size = await this.downloadAudio(item.cacheId, item.downloadUrl, item.cacheKey);
       audioStored = true;
 
-      store.setPhase(cacheId, 'coverArt', REQUIRED_PROGRESS.coverArt);
-      coverArtKeys.push(...await this.cacheCoverArt(item));
-
-      store.setPhase(cacheId, 'lyrics', REQUIRED_PROGRESS.lyrics);
-      lyricsStored = await this.cacheLyrics(item);
-
       store.setPhase(cacheId, 'finalizing', REQUIRED_PROGRESS.finalizing);
       store.markDone(cacheId, {
         size,
-        coverArtKeys,
-        lyricsStored,
+        coverArtKeys: [],
+        lyricsStored: false,
       });
 
+      await this.runDeferredRequiredAssets(item.cacheId, item);
       await this.runOptionalEnrichments(item.cacheId, item);
       useDownloadStore.getState().finishQueueItem(item.cacheId);
     } catch (err) {
       console.error(`[DownloadManager] Failed to download ${item.song.title}:`, err);
-      await this.rollbackRequiredAssets(item.cacheId, item.cacheKey, item.serverId, item.song.id, audioStored, lyricsStored, coverArtKeys);
+      await this.rollbackRequiredAssets(item.cacheId, item.cacheKey, audioStored);
       useDownloadStore.getState().markError(cacheId);
     }
   }
@@ -136,12 +129,19 @@ class DownloadManager {
     for (const size of REQUIRED_COVER_ART_SIZES) {
       const url = client.getCoverArt(item.song.coverArt, size);
       const cacheKey = buildCoverArtCacheKey(url);
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Cover art fetch failed: ${response.status}`);
+      const cachedRef = await hasArtReference(cacheKey);
+      if (!cachedRef) {
+        const cachedResponse = await cache.match(new Request(cacheKey));
+        if (!cachedResponse) {
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Cover art fetch failed: ${response.status}`);
+          }
+
+          await cache.put(new Request(cacheKey), response.clone());
+        }
       }
 
-      await cache.put(new Request(cacheKey), response.clone());
       await addArtReference(cacheKey, item.song.coverArt, item.serverId);
       coverArtKeys.push(cacheKey);
     }
@@ -160,6 +160,29 @@ class DownloadManager {
 
     await putOfflineLyrics(item.serverId, item.song.id, selected);
     return true;
+  }
+
+  private async runDeferredRequiredAssets(cacheId: string, item: { serverId: string; song: Song }): Promise<void> {
+    let coverArtKeys: string[] = [];
+    let lyricsStored = false;
+
+    try {
+      useDownloadStore.getState().setPhase(cacheId, 'coverArt', REQUIRED_PROGRESS.coverArt);
+      coverArtKeys = await this.cacheCoverArt(item);
+    } catch (err) {
+      console.error(`[DownloadManager] Cover art caching failed for ${item.song.title}:`, err);
+    }
+
+    try {
+      useDownloadStore.getState().setPhase(cacheId, 'lyrics', REQUIRED_PROGRESS.lyrics);
+      lyricsStored = await this.cacheLyrics(item);
+    } catch (err) {
+      console.error(`[DownloadManager] Lyrics caching failed for ${item.song.title}:`, err);
+    }
+
+    if (coverArtKeys.length > 0 || lyricsStored) {
+      useDownloadStore.getState().updateCachedAssets(cacheId, { coverArtKeys, lyricsStored });
+    }
   }
 
   private selectLyrics(results: StructuredLyrics[]): StructuredLyrics | null {
@@ -234,25 +257,8 @@ class DownloadManager {
   private async rollbackRequiredAssets(
     cacheId: string,
     audioCacheKey: string,
-    serverId: string,
-    songId: string,
     audioStored: boolean,
-    lyricsStored: boolean,
-    coverArtKeys: string[],
   ): Promise<void> {
-    if (lyricsStored) {
-      await deleteOfflineLyrics(serverId, songId);
-    }
-
-    for (const key of coverArtKeys) {
-      const removed = await removeArtReference(key);
-      if (removed) {
-        navigator.serviceWorker?.controller?.postMessage({ type: 'REMOVE_CACHED_ART', url: key });
-        const artCache = await caches.open(ART_CACHE_NAME);
-        await artCache.delete(new Request(key));
-      }
-    }
-
     if (audioStored) {
       navigator.serviceWorker?.controller?.postMessage({ type: 'REMOVE_CACHED_AUDIO', url: audioCacheKey });
       const audioCache = await caches.open(AUDIO_CACHE_NAME);

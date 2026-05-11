@@ -79,7 +79,7 @@ export default function CoverArt({ coverArt, size, className = '' }: CoverArtPro
   const sizeStyle = size ? { width: size, height: size, minWidth: size } : undefined;
   const sizeClass = size ? '' : 'w-full aspect-square';
 
-  const fetchSize = size ? size * 2 : 320;
+  const fetchSize = size ? size * 2 : 300;
 
   // Stable URL — same coverArt+size always returns the same URL string.
   // When coverArt is undefined we pass a dummy value; the URL won't be used.

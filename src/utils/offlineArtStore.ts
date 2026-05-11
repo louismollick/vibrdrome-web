@@ -40,6 +40,16 @@ export async function addArtReference(assetKey: string, coverArtId: string, serv
   }
 }
 
+export async function hasArtReference(assetKey: string): Promise<boolean> {
+  try {
+    const db = await getDB();
+    const existing = await db.get(STORE_NAME, assetKey) as OfflineArtRecord | undefined;
+    return !!existing;
+  } catch {
+    return false;
+  }
+}
+
 export async function removeArtReference(assetKey: string): Promise<boolean> {
   try {
     const db = await getDB();

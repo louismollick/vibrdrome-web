@@ -24,6 +24,7 @@ vi.mock('../utils/offlineLyricsStore', () => ({
 
 vi.mock('../utils/offlineArtStore', () => ({
   clearOfflineArtStore: vi.fn(async () => {}),
+  hasArtReference: vi.fn(async () => false),
   removeArtReference: vi.fn(async () => true),
 }));
 
@@ -173,7 +174,7 @@ describe('downloadStore', () => {
           cachedAt: Date.now(),
           requiredAssetsReady: true,
           lyricsStored: true,
-          coverArtKeys: ['https://music.example.com/rest/getCoverArt?id=art-1&size=300'],
+          coverArtKeys: ['http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice&size=300'],
         }],
       ]),
       totalCachedSize: 123,
@@ -182,10 +183,41 @@ describe('downloadStore', () => {
     await useDownloadStore.getState().removeFromCache('server-1:song-1');
 
     expect(deleteOfflineLyrics).toHaveBeenCalledWith('server-1', 'song-1');
-    expect(removeArtReference).toHaveBeenCalledWith('https://music.example.com/rest/getCoverArt?id=art-1&size=300');
+    expect(removeArtReference).toHaveBeenCalledWith('http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice&size=300');
     expect(postMessage).toHaveBeenCalledWith({
       type: 'REMOVE_CACHED_ART',
-      url: 'https://music.example.com/rest/getCoverArt?id=art-1&size=300',
+      url: 'http://localhost/__offline_cover_art__?server=https%3A%2F%2Fmusic.example.com&id=art-1&user=alice&size=300',
     });
+  });
+
+  it('merges deferred cached asset updates into an existing cached song', () => {
+    useDownloadStore.setState({
+      cachedSongs: new Map([
+        ['server-1:song-1', {
+          cacheId: 'server-1:song-1',
+          songId: 'song-1',
+          serverId: 'server-1',
+          serverName: 'Primary',
+          serverUrl: 'https://music.example.com',
+          username: 'alice',
+          cacheKey: 'http://localhost/__offline_audio__?server=https%3A%2F%2Fmusic.example.com&user=alice&id=song-1',
+          title: 'Song 1',
+          size: 123,
+          cachedAt: Date.now(),
+          requiredAssetsReady: true,
+          coverArtKeys: [],
+          lyricsStored: false,
+        }],
+      ]),
+    });
+
+    useDownloadStore.getState().updateCachedAssets('server-1:song-1', {
+      coverArtKeys: ['key-a', 'key-b'],
+      lyricsStored: true,
+    });
+
+    const cached = useDownloadStore.getState().cachedSongs.get('server-1:song-1');
+    expect(cached?.coverArtKeys).toEqual(['key-a', 'key-b']);
+    expect(cached?.lyricsStored).toBe(true);
   });
 });

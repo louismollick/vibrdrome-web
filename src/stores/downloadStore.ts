@@ -80,6 +80,7 @@ interface DownloadState {
   setPhase: (cacheId: string, phase: DownloadPhase, requiredProgress?: number) => void;
   markDone: (cacheId: string, payload: { size: number; coverArtKeys: string[]; lyricsStored: boolean }) => void;
   setOptionalPhase: (cacheId: string, phase: OptionalDownloadPhase) => void;
+  updateCachedAssets: (cacheId: string, payload: { coverArtKeys?: string[]; lyricsStored?: boolean }) => void;
   setOptionalAsset: (cacheId: string, asset: keyof NonNullable<CachedSong['optionalAssets']>, value: boolean) => void;
   finishQueueItem: (cacheId: string) => void;
   markError: (cacheId: string) => void;
@@ -315,6 +316,27 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           : q,
       ),
     });
+  },
+
+  updateCachedAssets: (cacheId, payload) => {
+    const cached = get().cachedSongs.get(cacheId);
+    if (!cached) return;
+
+    const mergedCoverArtKeys = payload.coverArtKeys
+      ? Array.from(new Set([...(cached.coverArtKeys ?? []), ...payload.coverArtKeys]))
+      : (cached.coverArtKeys ?? []);
+
+    const updated = normalizeCachedSong({
+      ...cached,
+      coverArtKeys: mergedCoverArtKeys,
+      lyricsStored: payload.lyricsStored ?? cached.lyricsStored ?? false,
+    });
+
+    const newCached = new Map(get().cachedSongs);
+    newCached.set(cacheId, updated);
+    void persistCachedSong(updated);
+
+    set({ cachedSongs: newCached });
   },
 
   setOptionalAsset: (cacheId, asset, value) => {
