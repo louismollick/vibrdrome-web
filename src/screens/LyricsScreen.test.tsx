@@ -6,6 +6,14 @@ import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useUIStore } from '../stores/uiStore';
 
+type TestToken = {
+  text: string;
+  reading: string;
+  term: string;
+  selectable: boolean;
+  kind: 'word' | 'other';
+};
+
 const seekMock = vi.fn();
 
 const lyricsHookMocks = vi.hoisted(() => ({
@@ -179,18 +187,18 @@ describe('LyricsScreen', () => {
   it('shows dictionary preparation progress while tokens are still loading', async () => {
     useUIStore.getState().setLyricsInteractionMode('dictionary');
 
-    let resolveFirstLine: ((value: Awaited<ReturnType<typeof coreMocks.tokenizeText>>) => void) | null = null;
-    let resolveSecondLine: ((value: Awaited<ReturnType<typeof coreMocks.tokenizeText>>) => void) | null = null;
+    let resolveFirstLine: ((value: TestToken[]) => void) | null = null;
+    let resolveSecondLine: ((value: TestToken[]) => void) | null = null;
 
     coreMocks.tokenizeText.mockImplementationOnce(
       () =>
-        new Promise((resolve) => {
+        new Promise<TestToken[]>((resolve) => {
           resolveFirstLine = resolve;
         }),
     );
     coreMocks.tokenizeText.mockImplementationOnce(
       () =>
-        new Promise((resolve) => {
+        new Promise<TestToken[]>((resolve) => {
           resolveSecondLine = resolve;
         }),
     );
