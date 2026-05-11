@@ -279,7 +279,7 @@ describe('PlaybackManager cast integration', () => {
     }
   });
 
-  it('swaps to the inactive player when resuming hidden standalone iOS playback', async () => {
+  it('swaps to the inactive player when resuming hidden standalone iOS playback without waiting on metadata before play', async () => {
     const userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
     const platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
     const touchDescriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints');
@@ -314,11 +314,7 @@ describe('PlaybackManager cast integration', () => {
 
     const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
     const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
-    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function (this: HTMLMediaElement) {
-      queueMicrotask(() => {
-        this.dispatchEvent(new Event('loadedmetadata'));
-      });
-    });
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
 
     try {
       const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
@@ -328,6 +324,7 @@ describe('PlaybackManager cast integration', () => {
       pm.activePlayer = 'A';
 
       await (pm as unknown as { resume: () => Promise<void> }).resume();
+      pm.playerB.dispatchEvent(new Event('loadedmetadata'));
 
       expect(pm.activePlayer).toBe('B');
       expect(pm.playerB.src).toContain('/stream/original');

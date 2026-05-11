@@ -706,44 +706,86 @@ class PlaybackManager {
     return player === 'A' ? this.playerA : this.playerB;
   }
 
-  private waitForLoadedMetadata(audio: HTMLAudioElement): Promise<void> {
+  private observeHiddenSwapAttempt(audio: HTMLAudioElement, player: 'A' | 'B'): () => void {
+    const eventTypes = ['loadedmetadata', 'canplay', 'playing', 'pause', 'error'] as const;
+    const removers = eventTypes.map((type) => {
+      const handler = () => {
+        this.debugLog(`resume:hidden-swap:event:${type}`, {
+          player,
+          audio: this.describeAudio(audio, player),
+        });
+      };
+      audio.addEventListener(type, handler);
+      return () => audio.removeEventListener(type, handler);
+    });
+
+    return () => {
+      removers.forEach((remove) => remove());
+    };
+  }
+
+  private queueHiddenSwapSeek(
+    audio: HTMLAudioElement,
+    player: 'A' | 'B',
+    resumeTime: number,
+  ): () => void {
+    if (!(resumeTime > 0) || !Number.isFinite(resumeTime)) return () => {};
+
+    let applied = false;
+    const expectedSrc = audio.currentSrc || audio.src;
+
+    const cleanup = () => {
+      audio.removeEventListener('loadedmetadata', attemptFromLoadedMetadata);
+      audio.removeEventListener('canplay', attemptFromCanPlay);
+      audio.removeEventListener('playing', attemptFromPlaying);
+    };
+
+    const attemptSeek = (trigger: 'immediate' | 'loadedmetadata' | 'canplay' | 'playing') => {
+      if (applied) return;
+      const currentSrc = audio.currentSrc || audio.src;
+      if (!currentSrc || currentSrc !== expectedSrc) {
+        cleanup();
+        return;
+      }
+      try {
+        audio.currentTime = resumeTime;
+        applied = true;
+        cleanup();
+        this.debugLog('resume:hidden-swap:seek-applied', {
+          player,
+          trigger,
+          resumeTime,
+          audio: this.describeAudio(audio, player),
+        });
+      } catch (err) {
+        this.debugLog('resume:hidden-swap:seek-pending', {
+          player,
+          trigger,
+          resumeTime,
+          error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
+          audio: this.describeAudio(audio, player),
+        });
+      }
+    };
+
+    const attemptFromLoadedMetadata = () => attemptSeek('loadedmetadata');
+    const attemptFromCanPlay = () => attemptSeek('canplay');
+    const attemptFromPlaying = () => attemptSeek('playing');
+
     if (audio.readyState >= HTMLMediaElement.HAVE_METADATA || Number.isFinite(audio.duration)) {
-      return Promise.resolve();
+      attemptSeek('immediate');
+      if (applied) return cleanup;
     }
 
-    return new Promise((resolve, reject) => {
-      let settled = false;
-
-      const cleanup = () => {
-        audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        audio.removeEventListener('error', handleError);
-        clearTimeout(timeoutId);
-      };
-
-      const handleLoadedMetadata = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve();
-      };
-
-      const handleError = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error('Audio metadata failed to load during background resume'));
-      };
-
-      const timeoutId = window.setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error('Timed out waiting for audio metadata during background resume'));
-      }, 1500);
-
-      audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.addEventListener('error', handleError);
+    this.debugLog('resume:hidden-swap:seek-queued', {
+      player,
+      resumeTime,
+      audio: this.describeAudio(audio, player),
     });
+    audio.addEventListener('loadedmetadata', attemptFromLoadedMetadata);
+    audio.addEventListener('canplay', attemptFromCanPlay);
+    audio.addEventListener('playing', attemptFromPlaying);
+    return cleanup;
   }
 
   private async resumeViaBackgroundSwap(): Promise<void> {
@@ -767,6 +809,8 @@ class PlaybackManager {
       targetAudio: this.describeAudio(targetAudio, targetPlayer),
     });
 
+    const stopObserving = this.observeHiddenSwapAttempt(targetAudio, targetPlayer);
+
     this.internalPause = true;
     targetAudio.pause();
     targetAudio.src = '';
@@ -776,16 +820,35 @@ class PlaybackManager {
     targetAudio.playbackRate = playbackRate;
     targetAudio.src = resumeSrc;
     targetAudio.load();
+    this.activePlayer = targetPlayer;
     this.applyElementVolume();
+    const cleanupQueuedSeek = this.queueHiddenSwapSeek(targetAudio, targetPlayer, resumeTime);
 
-    if (resumeTime > 0) {
-      await this.waitForLoadedMetadata(targetAudio);
-      targetAudio.currentTime = resumeTime;
+    this.debugLog('resume:hidden-swap:play-requested', {
+      previousPlayer,
+      targetPlayer,
+      targetAudio: this.describeAudio(targetAudio, targetPlayer),
+    });
+
+    try {
+      await targetAudio.play();
+      this.debugLog('resume:hidden-swap:play-resolved', {
+        previousPlayer,
+        targetPlayer,
+        targetAudio: this.describeAudio(targetAudio, targetPlayer),
+      });
+    } catch (err) {
+      this.activePlayer = previousPlayer;
+      this.internalPause = true;
+      targetAudio.pause();
+      targetAudio.src = '';
+      targetAudio.load();
+      this.internalPause = false;
+      cleanupQueuedSeek();
+      stopObserving();
+      throw err;
     }
 
-    await targetAudio.play();
-
-    this.activePlayer = targetPlayer;
     this.internalPause = true;
     previousAudio.pause();
     previousAudio.src = '';
@@ -797,6 +860,7 @@ class PlaybackManager {
     }
     usePlayerStore.getState().setPosition(Math.round(targetAudio.currentTime * 1000));
     this.applyElementVolume();
+    stopObserving();
 
     this.debugLog('resume:hidden-swap:resolved', {
       previousPlayer,
