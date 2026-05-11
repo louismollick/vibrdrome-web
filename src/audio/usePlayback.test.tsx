@@ -6,7 +6,7 @@ const { playbackManagerMock, syncPositionMock, loadServerQueueMock } = vi.hoiste
     warmup: vi.fn(),
     play: vi.fn(async () => {}),
     hasSource: vi.fn(() => false),
-    consumePendingStorePlaybackSync: vi.fn(() => false),
+    consumePendingStorePlaybackSync: vi.fn((_: boolean) => false),
     resume: vi.fn(async () => {}),
     pause: vi.fn(),
     seek: vi.fn(),
