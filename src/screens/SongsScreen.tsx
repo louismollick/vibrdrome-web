@@ -4,14 +4,16 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useMusicFolderStore } from '../stores/musicFolderStore';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import type { Song, Genre } from '../types/subsonic';
-import { Header, SongRow, LoadingSpinner } from '../components/common';
+import { Header, SongRow, LoadingSpinner, StateMessage } from '../components/common';
 import BatchActionBar from '../components/common/BatchActionBar';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
 
 const PAGE_SIZE = 100;
 
 export default function SongsScreen() {
   const playSongs = usePlayerStore((s) => s.playSongs);
   const activeFolderId = useMusicFolderStore((s) => s.activeFolderId);
+  const offlineLibrary = useOfflineLibrary();
 
   const [songs, setSongs] = useState<Song[]>([]);
   const [allSongs, setAllSongs] = useState<Song[]>([]);
@@ -25,6 +27,7 @@ export default function SongsScreen() {
   const [filterYear, setFilterYear] = useState('');
   const [filterArtist, setFilterArtist] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -32,8 +35,10 @@ export default function SongsScreen() {
   useEffect(() => {
     getSubsonicClient().getGenres().then((g) => {
       setGenres(g.sort((a, b) => a.value.localeCompare(b.value)));
-    }).catch(() => { /* silently fail */ });
-  }, []);
+    }).catch(() => {
+      setGenres(offlineLibrary.genres);
+    });
+  }, [offlineLibrary.genres]);
 
   // Load songs
   const loadSongs = useCallback(async (append = false) => {
@@ -44,6 +49,7 @@ export default function SongsScreen() {
       const client = getSubsonicClient();
       const data = await client.getRandomSongs(PAGE_SIZE, filterGenre || undefined, activeFolderId ?? undefined);
 
+      setUsingOfflineData(false);
       if (append) {
         setAllSongs((prev) => {
           const ids = new Set(prev.map((s) => s.id));
@@ -57,11 +63,14 @@ export default function SongsScreen() {
       if (data.length < PAGE_SIZE) setHasMore(false);
     } catch (err) {
       console.error('Failed to load songs:', err);
+      setUsingOfflineData(true);
+      setAllSongs(offlineLibrary.songs);
+      setHasMore(false);
     } finally {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [activeFolderId, filterGenre]);
+  }, [activeFolderId, filterGenre, offlineLibrary.songs]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset when load dependencies change
@@ -120,6 +129,12 @@ export default function SongsScreen() {
     <div className="flex h-full flex-col bg-bg-primary">
       <Header title={`Songs${songs.length > 0 ? ` (${songs.length.toLocaleString()})` : ''}`} showBack />
 
+      {usingOfflineData && (
+        <div className="px-4 pb-3 text-xs text-text-muted">
+          Showing downloaded songs from offline cache.
+        </div>
+      )}
+
       {/* Action buttons + filter toggle */}
       <div className="flex items-center gap-3 px-4 pb-3">
         <button
@@ -135,7 +150,7 @@ export default function SongsScreen() {
 
         <button
           onClick={() => loadSongs(true)}
-          disabled={loading || loadingMore}
+          disabled={loading || loadingMore || usingOfflineData}
           className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-text-primary transition-colors hover:bg-bg-tertiary disabled:opacity-50"
         >
           Load More
@@ -250,7 +265,7 @@ export default function SongsScreen() {
             ))}
 
             {/* Infinite scroll sentinel */}
-            {hasMore && (
+            {hasMore && !usingOfflineData && (
               <div ref={sentinelRef} className="flex justify-center py-4">
                 {loadingMore && (
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-bg-tertiary border-t-accent" />
@@ -259,7 +274,10 @@ export default function SongsScreen() {
             )}
 
             {songs.length === 0 && !loading && (
-              <p className="py-8 text-center text-text-muted">No songs found</p>
+              <StateMessage
+                title={usingOfflineData ? 'No downloaded songs available offline' : 'No songs found'}
+                body={usingOfflineData ? 'Download songs while online to play them offline later.' : undefined}
+              />
             )}
           </div>
         </div>

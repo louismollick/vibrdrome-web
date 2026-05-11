@@ -42,17 +42,21 @@ async function setCache(songId: string, peaks: number[]): Promise<void> {
  * Extract waveform peaks from an audio URL.
  * Returns normalized peaks array (0-1) or null on failure.
  */
-export async function extractWaveform(songId: string, audioUrl: string): Promise<number[] | null> {
+export async function extractWaveform(songId: string, audioSource: string | Blob): Promise<number[] | null> {
   // Check cache first
   const cached = await getCached(songId);
   if (cached) return cached;
 
   try {
-    // Fetch the audio data
-    const response = await fetch(audioUrl);
-    if (!response.ok) return null;
+    const arrayBuffer = typeof audioSource === 'string'
+      ? await (async () => {
+        const response = await fetch(audioSource);
+        if (!response.ok) return null;
+        return response.arrayBuffer();
+      })()
+      : await audioSource.arrayBuffer();
 
-    const arrayBuffer = await response.arrayBuffer();
+    if (!arrayBuffer) return null;
 
     // Decode audio data
     const audioContext = new OfflineAudioContext(1, 1, 44100);

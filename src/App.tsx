@@ -8,28 +8,78 @@ import LoadingSpinner from './components/common/LoadingSpinner';
 import Sidebar from './components/common/Sidebar';
 import { usePlayback } from './audio/usePlayback';
 import { darkenHex } from './utils/color';
+import { getOfflineMessage, getOfflineRouteTitle } from './utils/offlineCapability';
 import CommandPalette from './components/common/CommandPalette';
 import ShortcutsOverlay from './components/common/ShortcutsOverlay';
 import RightPane from './components/player/RightPane';
 import PopOutPlayer from './components/player/PopOutPlayer';
+import MiniPlayer from './components/player/MiniPlayer';
+import OfflineUnavailableScreen from './components/common/OfflineUnavailableScreen';
 import { useDownloadStore } from './stores/downloadStore';
+import LibraryScreen from './screens/LibraryScreen';
+import ArtistsScreen from './screens/ArtistsScreen';
+import ArtistDetailScreen from './screens/ArtistDetailScreen';
+import AlbumsListScreen from './screens/AlbumsListScreen';
+import AlbumDetailScreen from './screens/AlbumDetailScreen';
+import SongsScreen from './screens/SongsScreen';
+import GenresScreen from './screens/GenresScreen';
+import NowPlayingScreen from './screens/NowPlayingScreen';
+import FavoritesScreen from './screens/FavoritesScreen';
+import SearchScreen from './screens/SearchScreen';
+import SettingsScreen from './screens/SettingsScreen';
+import DownloadsScreen from './screens/DownloadsScreen';
+import QueueScreen from './screens/QueueScreen';
+import LyricsScreen from './screens/LyricsScreen';
+import EQScreen from './screens/EQScreen';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
+
+const CHUNK_RELOAD_GUARD_KEY = 'vibrdrome_chunk_reload_attempted';
+
+function isChunkLoadError(error: Error): boolean {
+  return error.message.includes('dynamically imported module') || error.message.includes('Failed to fetch');
+}
 
 // Error boundary for stale chunk errors after deploys
-class ChunkErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
+class ChunkErrorBoundary extends Component<{ children: ReactNode; pathname: string }, { error: Error | null }> {
+  state = { error: null as Error | null };
 
   static getDerivedStateFromError(error: Error) {
-    if (error.message.includes('dynamically imported module') || error.message.includes('Failed to fetch')) {
-      return { hasError: true };
+    if (isChunkLoadError(error)) {
+      return { error };
     }
     throw error;
   }
 
+  componentDidUpdate(prevProps: Readonly<{ children: ReactNode; pathname: string }>) {
+    if (prevProps.pathname !== this.props.pathname && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
   render() {
-    if (this.state.hasError) {
+    if (this.state.error) {
+      const offline = !navigator.onLine;
+      const message = offline
+        ? getOfflineMessage(this.props.pathname)
+        : {
+            title: 'A new version is available',
+            body: 'Reload to update the app shell and screen bundles.',
+          };
+
+      if (offline) {
+        return (
+          <OfflineUnavailableScreen
+            screenTitle={getOfflineRouteTitle(this.props.pathname)}
+            title={message.title}
+            body={message.body}
+          />
+        );
+      }
+
       return (
         <div className="flex min-h-dvh flex-col items-center justify-center bg-bg-primary px-4 text-center">
-          <p className="mb-4 text-lg text-text-primary">A new version is available</p>
+          <p className="mb-2 text-lg text-text-primary">{message.title}</p>
+          <p className="mb-4 max-w-sm text-sm text-text-secondary">{message.body}</p>
           <button
             onClick={() => window.location.reload()}
             className="rounded-lg bg-accent px-6 py-3 font-semibold text-white hover:bg-accent-hover"
@@ -46,25 +96,20 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
 // Lazy-loaded screens with auto-retry on chunk failure
 function lazyWithRetry(importFn: () => Promise<{ default: React.ComponentType }>) {
   return React.lazy(() =>
-    importFn().catch(() => {
-      // Chunk failed to load — likely a new deploy. Force reload.
-      window.location.reload();
-      return new Promise(() => {}); // never resolves, page reloads
+    importFn().catch((error: Error) => {
+      if (isChunkLoadError(error) && navigator.onLine && !sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY)) {
+        sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1');
+        window.location.reload();
+        return new Promise(() => {});
+      }
+      throw error;
     })
   );
 }
 
 // Lazy-loaded screens
 const LoginScreen = lazyWithRetry(() => import('./screens/LoginScreen'));
-const LibraryScreen = lazyWithRetry(() => import('./screens/LibraryScreen'));
-const ArtistsScreen = lazyWithRetry(() => import('./screens/ArtistsScreen'));
-const ArtistDetailScreen = lazyWithRetry(() => import('./screens/ArtistDetailScreen'));
-const AlbumsListScreen = lazyWithRetry(() => import('./screens/AlbumsListScreen'));
-const AlbumDetailScreen = lazyWithRetry(() => import('./screens/AlbumDetailScreen'));
-const SongsScreen = lazyWithRetry(() => import('./screens/SongsScreen'));
-const GenresScreen = lazyWithRetry(() => import('./screens/GenresScreen'));
 const GenerationsScreen = lazyWithRetry(() => import('./screens/GenerationsScreen'));
-const FavoritesScreen = lazyWithRetry(() => import('./screens/FavoritesScreen'));
 const FolderBrowserScreen = lazyWithRetry(() => import('./screens/FolderBrowserScreen'));
 const FolderDetailScreen = lazyWithRetry(() => import('./screens/FolderDetailScreen'));
 const PlaylistsScreen = lazyWithRetry(() => import('./screens/PlaylistsScreen'));
@@ -74,21 +119,31 @@ const SmartPlaylistScreen = lazyWithRetry(() => import('./screens/SmartPlaylistS
 const RadioScreen = lazyWithRetry(() => import('./screens/RadioScreen'));
 const StationSearchScreen = lazyWithRetry(() => import('./screens/StationSearchScreen'));
 const AddStationScreen = lazyWithRetry(() => import('./screens/AddStationScreen'));
-const SearchScreen = lazyWithRetry(() => import('./screens/SearchScreen'));
-const SettingsScreen = lazyWithRetry(() => import('./screens/SettingsScreen'));
 const ServerManagerScreen = lazyWithRetry(() => import('./screens/ServerManagerScreen'));
-const DownloadsScreen = lazyWithRetry(() => import('./screens/DownloadsScreen'));
-const NowPlayingScreen = lazyWithRetry(() => import('./screens/NowPlayingScreen'));
-const QueueScreen = lazyWithRetry(() => import('./screens/QueueScreen'));
-const LyricsScreen = lazyWithRetry(() => import('./screens/LyricsScreen'));
-const EQScreen = lazyWithRetry(() => import('./screens/EQScreen'));
 const VisualizerScreen = lazyWithRetry(() => import('./screens/VisualizerScreen'));
 const ShareScreen = lazyWithRetry(() => import('./screens/ShareScreen'));
 
-const MiniPlayer = lazyWithRetry(() => import('./components/player/MiniPlayer'));
-
 const HIDE_MINIPLAYER_ROUTES = ['/now-playing', '/visualizer', '/login'];
 const HIDE_SIDEBAR_ROUTES = ['/login', '/now-playing', '/visualizer'];
+
+function OfflineLazyRoute({
+  pathname,
+  title,
+  children,
+}: {
+  pathname: string;
+  title: string;
+  children: ReactNode;
+}) {
+  const isOnline = useOnlineStatus();
+
+  if (!isOnline) {
+    const message = getOfflineMessage(pathname);
+    return <OfflineUnavailableScreen screenTitle={title} title={message.title} body={message.body} />;
+  }
+
+  return <>{children}</>;
+}
 
 export default function App() {
   const { isAuthenticated, loadFromStorage } = useAuthStore();
@@ -100,10 +155,14 @@ export default function App() {
   // Initialize playback engine
   usePlayback();
 
+  useEffect(() => {
+    sessionStorage.removeItem(CHUNK_RELOAD_GUARD_KEY);
+  }, []);
+
   // Load auth state and cached downloads on mount
   useEffect(() => {
     loadFromStorage();
-    useDownloadStore.getState().loadCachedSongs();
+    void useDownloadStore.getState().loadCachedSongs();
   }, [loadFromStorage]);
 
   // Apply theme to html element
@@ -159,11 +218,18 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         {showSidebar && <Sidebar />}
         <div className="flex-1 overflow-y-auto">
-        <ChunkErrorBoundary>
+        <ChunkErrorBoundary pathname={location.pathname}>
         <Suspense fallback={<LoadingSpinner />}>
           <Routes>
             <Route path="/login" element={<LoginScreen />} />
-            <Route path="/share" element={<ShareScreen />} />
+            <Route
+              path="/share"
+              element={(
+                <OfflineLazyRoute pathname="/share" title="Shared Link">
+                  <ShareScreen />
+                </OfflineLazyRoute>
+              )}
+            />
 
             {/* Protected routes */}
             <Route
@@ -196,7 +262,11 @@ export default function App() {
             />
             <Route
               path="/generations"
-              element={isAuthenticated ? <GenerationsScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/generations" title="Generations">
+                  <GenerationsScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/favorites"
@@ -204,39 +274,75 @@ export default function App() {
             />
             <Route
               path="/folders"
-              element={isAuthenticated ? <FolderBrowserScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/folders" title="Folders">
+                  <FolderBrowserScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/folder/:folderId"
-              element={isAuthenticated ? <FolderDetailScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/folder/:folderId" title="Folder">
+                  <FolderDetailScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/playlists"
-              element={isAuthenticated ? <PlaylistsScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/playlists" title="Playlists">
+                  <PlaylistsScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/playlist/:playlistId"
-              element={isAuthenticated ? <PlaylistDetailScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/playlist/:playlistId" title="Playlist">
+                  <PlaylistDetailScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/playlist/edit/:playlistId?"
-              element={isAuthenticated ? <PlaylistEditorScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/playlist/edit/:playlistId?" title="Edit Playlist">
+                  <PlaylistEditorScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/smart-playlists"
-              element={isAuthenticated ? <SmartPlaylistScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/smart-playlists" title="Smart Playlists">
+                  <SmartPlaylistScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/radio"
-              element={isAuthenticated ? <RadioScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/radio" title="Radio">
+                  <RadioScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/radio/search"
-              element={isAuthenticated ? <StationSearchScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/radio/search" title="Search Stations">
+                  <StationSearchScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/radio/add"
-              element={isAuthenticated ? <AddStationScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/radio/add" title="Add Station">
+                  <AddStationScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/search"
@@ -248,7 +354,11 @@ export default function App() {
             />
             <Route
               path="/settings/servers"
-              element={isAuthenticated ? <ServerManagerScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/settings/servers" title="Manage Servers">
+                  <ServerManagerScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
             <Route
               path="/downloads"
@@ -272,7 +382,11 @@ export default function App() {
             />
             <Route
               path="/visualizer"
-              element={isAuthenticated ? <VisualizerScreen /> : <Navigate to="/login" replace />}
+              element={isAuthenticated ? (
+                <OfflineLazyRoute pathname="/visualizer" title="Visualizer">
+                  <VisualizerScreen />
+                </OfflineLazyRoute>
+              ) : <Navigate to="/login" replace />}
             />
 
             {/* Catch-all */}
@@ -285,9 +399,7 @@ export default function App() {
       </div>
 
       {showMiniPlayer && (
-        <Suspense fallback={null}>
-          <MiniPlayer />
-        </Suspense>
+        <MiniPlayer />
       )}
 
       {popOutPlayerOpen && hasPlayback && (

@@ -1,54 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
-import { getSubsonicClient } from '../../api/SubsonicClient';
+import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { getPlaybackManager } from '../../audio/PlaybackManager';
-import type { StructuredLyrics, LyricLine } from '../../types/subsonic';
+import type { LyricLine } from '../../types/subsonic';
+import { useCurrentSongLyrics } from '../../hooks/useCurrentSongLyrics';
+import { getOfflineMessage } from '../../utils/offlineCapability';
 
 export default function NowPlayingLyrics() {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const positionMs = usePlayerStore((s) => s.positionMs);
   const songId = currentSong?.id;
-
-  const [lyrics, setLyrics] = useState<StructuredLyrics | null>(null);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const { lyrics, status } = useCurrentSongLyrics(songId);
   const currentLineRef = useRef<HTMLButtonElement | null>(null);
-  const loadedForRef = useRef<string | null>(null);
-
-  // Detect song change and load lyrics
-  if (songId !== loadedForRef.current) {
-    loadedForRef.current = songId ?? null;
-    if (songId) {
-      setStatus('loading');
-      setLyrics(null);
-    } else {
-      setStatus('idle');
-      setLyrics(null);
-    }
-  }
-
-  useEffect(() => {
-    if (!songId || status !== 'loading') return;
-
-    let cancelled = false;
-
-    getSubsonicClient()
-      .getLyricsBySongId(songId)
-      .then((results) => {
-        if (cancelled) return;
-        if (results.length > 0) {
-          const synced = results.find((l) => l.synced);
-          setLyrics(synced ?? results[0]);
-          setStatus('idle');
-        } else {
-          setStatus('error');
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('error');
-      });
-
-    return () => { cancelled = true; };
-  }, [songId, status]);
+  const offlineLyricsMessage = getOfflineMessage('lyrics');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLineIdxRef = useRef(-1);
@@ -86,10 +49,26 @@ export default function NowPlayingLyrics() {
     );
   }
 
-  if (!currentSong || status === 'error' || !lyrics) {
+  if (!currentSong) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-text-muted">{!currentSong ? 'No song playing' : 'No lyrics available'}</p>
+        <p className="text-sm text-text-muted">No song playing</p>
+      </div>
+    );
+  }
+
+  if (status === 'offline') {
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center">
+        <p className="text-sm text-text-muted">{offlineLyricsMessage.title}</p>
+      </div>
+    );
+  }
+
+  if (status === 'error' || !lyrics) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-text-muted">No lyrics available</p>
       </div>
     );
   }

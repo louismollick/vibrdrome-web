@@ -1,4 +1,5 @@
 import { useDownloadStore } from '../../stores/downloadStore';
+import { useAuthStore } from '../../stores/authStore';
 import { getDownloadManager } from '../../audio/DownloadManager';
 import type { Song } from '../../types/subsonic';
 
@@ -9,11 +10,12 @@ interface DownloadButtonProps {
 }
 
 export default function DownloadButton({ songs, albumId, className = '' }: DownloadButtonProps) {
-  const cachedSongs = useDownloadStore((s) => s.cachedSongs);
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const isCachedForServer = useDownloadStore((s) => s.isCachedForServer);
   const queue = useDownloadStore((s) => s.queue);
 
-  const allCached = songs.length > 0 && songs.every((s) => cachedSongs.has(s.id));
-  const someInQueue = songs.some((s) => queue.some((q) => q.song.id === s.id));
+  const allCached = !!activeServerId && songs.length > 0 && songs.every((song) => isCachedForServer(activeServerId, song.id));
+  const someInQueue = !!activeServerId && songs.some((song) => queue.some((q) => q.serverId === activeServerId && q.song.id === song.id));
 
   const handleClick = () => {
     if (allCached) return;

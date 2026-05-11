@@ -4,6 +4,8 @@ import { getSubsonicClient } from '../../api/SubsonicClient';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useMusicFolderStore } from '../../stores/musicFolderStore';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { getOfflineMessage, isOfflineSupportedRoute } from '../../utils/offlineCapability';
 import { fuzzyFilter } from '../../utils/fuzzySearch';
 import CoverArt from './CoverArt';
 import type { Artist, Album, Song } from '../../types/subsonic';
@@ -42,6 +44,8 @@ interface ResultItem {
   label: string;
   sublabel?: string;
   coverArt?: string;
+  disabled?: boolean;
+  disabledReason?: string;
   onSelect: () => void;
 }
 
@@ -49,6 +53,7 @@ export default function CommandPalette() {
   const navigate = useNavigate();
   const open = useUIStore((s) => s.commandPaletteOpen);
   const close = useUIStore((s) => s.closeCommandPalette);
+  const isOnline = useOnlineStatus();
 
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -116,10 +121,17 @@ export default function CommandPalette() {
     // Navigation
     const filteredNav = fuzzyFilter(NAV_ITEMS, query, (n) => n.label);
     for (const nav of filteredNav.slice(0, query ? 5 : 6)) {
+      const disabled = !isOnline && !isOfflineSupportedRoute(nav.path);
       items.push({
         type: 'nav',
         label: nav.label,
-        onSelect: () => { close(); navigate(nav.path); },
+        disabled,
+        disabledReason: disabled ? getOfflineMessage(nav.path).title : undefined,
+        onSelect: () => {
+          if (disabled) return;
+          close();
+          navigate(nav.path);
+        },
       });
     }
 
@@ -165,7 +177,7 @@ export default function CommandPalette() {
     }
 
     return items;
-  }, [query, serverResults, navigate, close, playing]);
+  }, [query, serverResults, navigate, close, isOnline, playing]);
 
   // Keyboard navigation — use ref to avoid stale closure
   const resultsRef = useRef(results);
@@ -263,10 +275,12 @@ export default function CommandPalette() {
                 )}
                 <button
                   onClick={item.onSelect}
+                  disabled={item.disabled}
+                  title={item.disabledReason}
                   onMouseEnter={() => setSelectedIndex(i)}
                   className={`flex w-full items-center gap-3 px-4 py-2 text-left transition-colors ${
                     i === selectedIndex ? 'bg-accent/10 text-accent' : 'text-text-primary hover:bg-bg-tertiary'
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent`}
                 >
                   {item.coverArt ? (
                     <CoverArt coverArt={item.coverArt} size={32} className="rounded shrink-0" />

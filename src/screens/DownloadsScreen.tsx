@@ -18,16 +18,47 @@ export default function DownloadsScreen() {
     loadCachedSongs();
   }, [loadCachedSongs]);
 
+  const visibleQueue = queue.filter((item) => item.status !== 'done' || item.optionalPhase !== null);
+  const readySongs = Array.from(cachedSongs.values()).filter((song) => song.requiredAssetsReady);
+
   // Group cached songs by album
   const albumGroups = new Map<string, CachedSong[]>();
-  for (const song of cachedSongs.values()) {
+  for (const song of readySongs) {
     const key = song.albumId || song.album || 'Unknown Album';
     const group = albumGroups.get(key) || [];
     group.push(song);
     albumGroups.set(key, group);
   }
 
-  const hasContent = queue.length > 0 || cachedSongs.size > 0;
+  const hasContent = visibleQueue.length > 0 || albumGroups.size > 0;
+
+  function phaseLabel(phase: string) {
+    switch (phase) {
+      case 'audio':
+        return 'Downloading audio';
+      case 'coverArt':
+        return 'Saving cover art';
+      case 'lyrics':
+        return 'Saving lyrics';
+      case 'finalizing':
+        return 'Finalizing';
+      default:
+        return 'Queued';
+    }
+  }
+
+  function optionalLabel(phase: string | null) {
+    switch (phase) {
+      case 'waveform':
+        return 'Generating waveform';
+      case 'artistInfo':
+        return 'Saving artist info';
+      case 'artistImage':
+        return 'Saving artist image';
+      default:
+        return null;
+    }
+  }
 
   return (
     <div className="flex h-full flex-col bg-bg-primary">
@@ -37,10 +68,10 @@ export default function DownloadsScreen() {
         <div className="mx-auto max-w-lg">
 
           {/* Storage info */}
-          {cachedSongs.size > 0 && (
+          {readySongs.length > 0 && (
             <div className="mb-4 flex items-center justify-between rounded-lg bg-bg-secondary p-3">
               <div>
-                <p className="text-sm text-text-primary">{cachedSongs.size} songs cached</p>
+                <p className="text-sm text-text-primary">{readySongs.length} songs cached</p>
                 <p className="text-xs text-text-muted">{formatBytes(totalCachedSize)}</p>
               </div>
               <button
@@ -53,23 +84,28 @@ export default function DownloadsScreen() {
           )}
 
           {/* Active downloads */}
-          {queue.length > 0 && (
+          {visibleQueue.length > 0 && (
             <section className="mb-6">
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">
                 {isDownloading ? 'Downloading...' : 'Queued'}
               </h2>
               <div className="space-y-1">
-                {queue.map((item) => (
+                {visibleQueue.map((item) => (
                   <div key={item.song.id} className="flex items-center gap-3 rounded-lg bg-bg-secondary p-3">
                     <CoverArt coverArt={item.song.coverArt} size={40} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-text-primary">{item.song.title}</p>
                       <p className="truncate text-xs text-text-muted">{item.song.artist}</p>
-                      {item.status === 'downloading' && (
+                      {item.status !== 'error' && (
+                        <p className="mt-0.5 text-[10px] text-text-muted">
+                          {item.optionalPhase ? optionalLabel(item.optionalPhase) : phaseLabel(item.phase)}
+                        </p>
+                      )}
+                      {item.status !== 'error' && (
                         <div className="mt-1 h-1 overflow-hidden rounded-full bg-bg-tertiary">
                           <div
                             className="h-full rounded-full bg-accent transition-all"
-                            style={{ width: `${Math.round(item.progress * 100)}%` }}
+                            style={{ width: `${Math.round(item.requiredProgress * 100)}%` }}
                           />
                         </div>
                       )}
@@ -101,14 +137,17 @@ export default function DownloadsScreen() {
                     </div>
                     <div className="ml-10 space-y-0.5">
                       {songs.map((song) => (
-                        <div key={song.songId} className="flex items-center justify-between py-1">
+                        <div key={song.cacheId} className="flex items-center justify-between py-1">
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs text-text-secondary">{song.title}</p>
+                            {song.serverName && (
+                              <p className="truncate text-[10px] text-text-muted">{song.serverName}</p>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-text-muted">{formatBytes(song.size)}</span>
                             <button
-                              onClick={() => removeFromCache(song.songId)}
+                              onClick={() => void removeFromCache(song.cacheId)}
                               className="flex h-6 w-6 items-center justify-center rounded-full text-text-muted hover:bg-bg-tertiary hover:text-red-400"
                               aria-label="Remove"
                             >

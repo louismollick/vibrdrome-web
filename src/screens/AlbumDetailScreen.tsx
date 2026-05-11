@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { usePlayerStore } from '../stores/playerStore';
+import { useOfflineLibrary } from '../hooks/useOfflineLibrary';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { shareUrl } from '../utils/share';
 import type { Album } from '../types/subsonic';
 import { Header, CoverArt, SongRow, LoadingSpinner } from '../components/common';
 import DownloadButton from '../components/common/DownloadButton';
+import { getOfflineMessage } from '../utils/offlineCapability';
 
 function formatDuration(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -21,6 +24,11 @@ export default function AlbumDetailScreen() {
   const [album, setAlbum] = useState<Album | null>(null);
   const [loading, setLoading] = useState(true);
   const [starred, setStarred] = useState(false);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+  const offlineLibrary = useOfflineLibrary();
+  const isOnline = useOnlineStatus();
+  const favoritesOfflineMessage = getOfflineMessage('favoritesMutation');
+  const shareOfflineMessage = getOfflineMessage('share');
 
   useEffect(() => {
     if (!albumId) return;
@@ -28,16 +36,21 @@ export default function AlbumDetailScreen() {
       try {
         const client = getSubsonicClient();
         const data = await client.getAlbum(albumId);
+        setUsingOfflineData(false);
         setAlbum(data);
         setStarred(!!data.starred);
       } catch (err) {
         console.error('Failed to load album:', err);
+        const offlineAlbum = offlineLibrary.albums.find((item) => item.id === albumId) ?? null;
+        setUsingOfflineData(true);
+        setAlbum(offlineAlbum);
+        setStarred(!!offlineAlbum?.starred);
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [albumId]);
+  }, [albumId, offlineLibrary.albums]);
 
   const handlePlay = () => {
     if (!album?.song?.length) return;
@@ -51,7 +64,7 @@ export default function AlbumDetailScreen() {
   };
 
   const handleStarToggle = async () => {
-    if (!album) return;
+    if (!album || !isOnline) return;
     const client = getSubsonicClient();
     try {
       if (starred) {
@@ -100,6 +113,12 @@ export default function AlbumDetailScreen() {
       <Header title={album.name} showBack />
 
       <div className="flex-1 overflow-y-auto">
+        {usingOfflineData && (
+          <div className="px-4 pb-3 text-xs text-text-muted">
+            Showing downloaded album from offline cache.
+          </div>
+        )}
+
         {/* Album header info */}
         <div className="flex flex-col items-center px-3 pb-4 md:px-4">
           <CoverArt coverArt={album.coverArt} size={200} className="md:!h-[240px] md:!w-[240px]" />
@@ -147,7 +166,9 @@ export default function AlbumDetailScreen() {
 
             <button
               onClick={() => shareUrl(`${album.name} by ${album.artist ?? 'Unknown'}`)}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-secondary transition-colors hover:bg-bg-tertiary"
+              disabled={!isOnline}
+              title={!isOnline ? shareOfflineMessage.title : undefined}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-secondary transition-colors hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Share"
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
@@ -157,7 +178,9 @@ export default function AlbumDetailScreen() {
 
             <button
               onClick={handleStarToggle}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-secondary transition-colors hover:bg-bg-tertiary"
+              disabled={!isOnline}
+              title={!isOnline ? favoritesOfflineMessage.title : undefined}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-secondary transition-colors hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={starred ? 'Unstar' : 'Star'}
             >
               <svg
