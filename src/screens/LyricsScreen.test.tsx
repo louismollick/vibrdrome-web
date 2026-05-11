@@ -168,7 +168,7 @@ describe('LyricsScreen', () => {
 
     const tokenButton = await screen.findByRole('button', { name: '日本語' });
 
-    expect(tokenButton.className).toContain('underline');
+    expect(tokenButton.className).toContain('after:bg-accent/70');
     expect(screen.queryByRole('button', { name: '日本語猫' })).toBeNull();
 
     await fireEvent.click(tokenButton);
@@ -176,23 +176,65 @@ describe('LyricsScreen', () => {
     expect(seekMock).not.toHaveBeenCalled();
   });
 
-  it('opens the overlay for a token and updates results when another token is tapped', async () => {
+  it('shows dictionary preparation progress while tokens are still loading', async () => {
+    useUIStore.getState().setLyricsInteractionMode('dictionary');
+
+    let resolveFirstLine: ((value: Awaited<ReturnType<typeof coreMocks.tokenizeText>>) => void) | null = null;
+    let resolveSecondLine: ((value: Awaited<ReturnType<typeof coreMocks.tokenizeText>>) => void) | null = null;
+
+    coreMocks.tokenizeText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstLine = resolve;
+        }),
+    );
+    coreMocks.tokenizeText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecondLine = resolve;
+        }),
+    );
+
+    renderScreen();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preparing dictionary mode/i)).toBeInTheDocument();
+      expect(screen.getByText(/Tokenized 0 of 2 lines/i)).toBeInTheDocument();
+    });
+
+    resolveFirstLine?.([
+      { text: '日本語', reading: 'にほんご', term: '日本語', selectable: true, kind: 'word' },
+      { text: '猫', reading: 'ねこ', term: '猫', selectable: true, kind: 'word' },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '日本語' })).toBeInTheDocument();
+      expect(screen.getByText(/Tokenized 1 of 2 lines/i)).toBeInTheDocument();
+    });
+
+    resolveSecondLine?.([
+      { text: '次', reading: 'つぎ', term: '次', selectable: true, kind: 'word' },
+      { text: 'の行', reading: '', term: 'の行', selectable: false, kind: 'other' },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Preparing dictionary mode/i)).toBeNull();
+    });
+  });
+
+  it('renders tokenized results across multiple lines after preparation completes', async () => {
     useUIStore.getState().setLyricsInteractionMode('dictionary');
 
     renderScreen();
 
-    await fireEvent.click(await screen.findByRole('button', { name: '日本語' }));
-
     await waitFor(() => {
-      expect(screen.getByLabelText('Dictionary lookup')).toBeInTheDocument();
-      expect(screen.getByText('entry-日本語')).toBeInTheDocument();
+      expect(screen.queryByText(/Preparing dictionary mode/i)).toBeNull();
     });
 
-    await fireEvent.click(screen.getAllByRole('button', { name: '猫' })[0]);
-
     await waitFor(() => {
-      expect(coreMocks.lookupTerm).toHaveBeenLastCalledWith('猫', expect.any(Map));
-      expect(screen.getByText('entry-猫')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '日本語' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '猫' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '次' })).toBeInTheDocument();
     });
   });
 

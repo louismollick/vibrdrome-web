@@ -64,6 +64,25 @@ function renderPlainLine(line: LyricLine) {
   return line.value || '\u00A0';
 }
 
+function getTokenizationOrder(lines: LyricLine[], priorityIndex: number) {
+  const indices = lines.map((_, index) => index);
+
+  if (priorityIndex < 0 || priorityIndex >= lines.length) {
+    return indices;
+  }
+
+  return indices.sort((a, b) => {
+    const distanceA = Math.abs(a - priorityIndex);
+    const distanceB = Math.abs(b - priorityIndex);
+
+    if (distanceA !== distanceB) {
+      return distanceA - distanceB;
+    }
+
+    return a - b;
+  });
+}
+
 export default function LyricsScreen() {
   const navigate = useNavigate();
   const activeServerId = useAuthStore((state) => state.activeServerId);
@@ -78,15 +97,31 @@ export default function LyricsScreen() {
   const [dictionaryStateLoaded, setDictionaryStateLoaded] = useState(false);
   const [dictionaryStateError, setDictionaryStateError] = useState(false);
   const [tokenizedLines, setTokenizedLines] = useState<Record<number, YomitanToken[]>>({});
-  const [overlayState, setOverlayState] = useState<{ lineIndex: number; tokenIndex: number } | null>(null);
+  const [tokenizationProgress, setTokenizationProgress] = useState<{
+    status: 'idle' | 'loading' | 'ready';
+    completed: number;
+    total: number;
+  }>({
+    status: 'idle',
+    completed: 0,
+    total: 0,
+  });
+  const [overlayState, setOverlayState] = useState<{
+    lineIndex: number;
+    tokenIndex: number;
+    sessionKey: string;
+  } | null>(null);
 
   const currentLineRef = useRef<HTMLElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLineIdxRef = useRef(-1);
+  const dictionaryPriorityLineIndexRef = useRef(-1);
   const tokenCacheRef = useRef<Map<string, YomitanToken[]>>(new Map());
   const offlineLyricsMessage = getOfflineMessage('lyrics');
 
   const currentLineIndex = lyrics?.line ? getCurrentLineIndex(lyrics.line, positionMs) : -1;
+  const overlaySessionKey = `${currentSong?.id ?? ''}:${lyricsInteractionMode}`;
+  const activeOverlayState = overlayState?.sessionKey === overlaySessionKey ? overlayState : null;
   const dictionaryPreferenceFingerprint = useMemo(
     () => JSON.stringify(dictionaryPreferences.map(({ title, enabled }) => [title, enabled])),
     [dictionaryPreferences],
@@ -119,6 +154,10 @@ export default function LyricsScreen() {
       setDictionaryStateLoaded(true);
     }
   });
+
+  useEffect(() => {
+    dictionaryPriorityLineIndexRef.current = currentLineIndex;
+  }, [currentLineIndex]);
 
   useEffect(() => {
     if (lyricsInteractionMode !== 'dictionary') return;
@@ -154,6 +193,11 @@ export default function LyricsScreen() {
     ) {
       queueMicrotask(() => {
         setTokenizedLines({});
+        setTokenizationProgress({
+          status: 'idle',
+          completed: 0,
+          total: 0,
+        });
       });
       return;
     }
@@ -161,29 +205,83 @@ export default function LyricsScreen() {
     let cancelled = false;
 
     const tokenizeLines = async () => {
-      const nextLines: Record<number, YomitanToken[]> = {};
-
-      await Promise.all(
-        lyrics.line!.map(async (line, index) => {
-          const key = buildTokenCacheKey(
-            activeServerId,
-            currentSong.id,
-            line.value,
-            dictionaryPreferenceFingerprint,
-          );
-
-          let tokens = tokenCacheRef.current.get(key);
-          if (!tokens) {
-            tokens = await tokenizeText(line.value, enabledDictionaryMap);
-            tokenCacheRef.current.set(key, tokens);
-          }
-
-          nextLines[index] = tokens;
-        }),
+      const orderedIndices = getTokenizationOrder(
+        lyrics.line!,
+        lyrics.synced ? dictionaryPriorityLineIndexRef.current : -1,
       );
+      const cachedLines: Record<number, YomitanToken[]> = {};
+      const workQueue: Array<{ index: number; line: LyricLine; key: string }> = [];
+
+      for (const index of orderedIndices) {
+        const line = lyrics.line![index];
+        const key = buildTokenCacheKey(
+          activeServerId,
+          currentSong.id,
+          line.value,
+          dictionaryPreferenceFingerprint,
+        );
+        const cachedTokens = tokenCacheRef.current.get(key);
+
+        if (cachedTokens) {
+          cachedLines[index] = cachedTokens;
+          continue;
+        }
+
+        workQueue.push({ index, line, key });
+      }
 
       if (cancelled) return;
-      setTokenizedLines(nextLines);
+
+      setTokenizedLines(cachedLines);
+
+      const total = orderedIndices.length;
+      let completed = total - workQueue.length;
+
+      setTokenizationProgress({
+        status: workQueue.length === 0 ? 'ready' : 'loading',
+        completed,
+        total,
+      });
+
+      if (workQueue.length === 0) {
+        return;
+      }
+
+      const batchSize = 1;
+
+      for (let offset = 0; offset < workQueue.length; offset += batchSize) {
+        const batch = workQueue.slice(offset, offset + batchSize);
+        const resolvedBatch = await Promise.all(
+          batch.map(async ({ index, line, key }) => {
+            const tokens = await tokenizeText(line.value, enabledDictionaryMap);
+            tokenCacheRef.current.set(key, tokens);
+            return { index, tokens };
+          }),
+        );
+
+        if (cancelled) return;
+
+        setTokenizedLines((current) => {
+          const next = { ...current };
+
+          for (const { index, tokens } of resolvedBatch) {
+            next[index] = tokens;
+          }
+
+          return next;
+        });
+
+        completed += resolvedBatch.length;
+        setTokenizationProgress({
+          status: completed >= total ? 'ready' : 'loading',
+          completed,
+          total,
+        });
+
+        if (completed < total) {
+          await new Promise((resolve) => window.setTimeout(resolve, 0));
+        }
+      }
     };
 
     void tokenizeLines();
@@ -197,6 +295,7 @@ export default function LyricsScreen() {
     dictionaryPreferenceFingerprint,
     enabledDictionaryMap,
     lyrics?.line,
+    lyrics?.synced,
     lyricsInteractionMode,
     status,
   ]);
@@ -221,14 +320,12 @@ export default function LyricsScreen() {
     container.scrollTo({ top: targetScroll, behavior: 'smooth' });
   }, [currentLineIndex, lyrics?.synced, positionMs]);
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      setOverlayState(null);
-    });
-  }, [currentSong?.id, lyricsInteractionMode]);
-
   const canUseDictionaryMode =
     dictionaryStateLoaded && !dictionaryStateError && installedDictionaries.length > 0 && enabledDictionaryMap.size > 0;
+  const isTokenizingDictionaryMode =
+    canUseDictionaryMode &&
+    tokenizationProgress.status === 'loading' &&
+    tokenizationProgress.completed < tokenizationProgress.total;
   const dictionaryModeMessage = dictionaryStateError
     ? 'Yomitan dictionaries could not be loaded. Open Settings to refresh or re-import dictionaries.'
     : installedDictionaries.length === 0
@@ -237,7 +334,7 @@ export default function LyricsScreen() {
         ? 'All Yomitan dictionaries are disabled. Re-enable one in Settings to use dictionary mode.'
         : null;
 
-  const overlayTokens = overlayState ? tokenizedLines[overlayState.lineIndex] ?? [] : [];
+  const overlayTokens = activeOverlayState ? tokenizedLines[activeOverlayState.lineIndex] ?? [] : [];
   const setCurrentLineElement = (element: HTMLElement | null) => {
     currentLineRef.current = element;
   };
@@ -300,14 +397,17 @@ export default function LyricsScreen() {
     return tokens.map((token, tokenIndex) => {
       if (token.selectable) {
         const selected =
-          overlayState?.lineIndex === lineIndex && overlayState.tokenIndex === tokenIndex;
+          activeOverlayState?.lineIndex === lineIndex && activeOverlayState.tokenIndex === tokenIndex;
 
         return (
           <button
             key={`${lineIndex}-${tokenIndex}-${token.text}`}
-            onClick={() => setOverlayState({ lineIndex, tokenIndex })}
-            className={`rounded-sm underline decoration-accent/70 underline-offset-4 transition-colors ${
-              selected ? 'text-accent' : 'hover:text-accent'
+            type="button"
+            onClick={() => setOverlayState({ lineIndex, tokenIndex, sessionKey: overlaySessionKey })}
+            className={`relative inline-block rounded-sm px-px transition-colors after:pointer-events-none after:absolute after:right-px after:bottom-[0.1em] after:left-px after:h-px after:rounded-full after:content-[''] ${
+              selected
+                ? 'text-accent after:bg-accent'
+                : 'after:bg-accent/70 hover:text-accent hover:after:bg-accent'
             }`}
           >
             {token.text}
@@ -334,6 +434,20 @@ export default function LyricsScreen() {
           >
             Open Settings
           </button>
+        </div>
+      )}
+
+      {isTokenizingDictionaryMode && (
+        <div className="rounded-xl border border-border bg-bg-secondary/60 px-4 py-3 text-sm text-text-secondary">
+          <div className="flex items-center gap-3">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-bg-tertiary border-t-accent" />
+            <div>
+              <p className="font-medium text-text-primary">Preparing dictionary mode…</p>
+              <p className="text-xs text-text-muted">
+                Tokenized {tokenizationProgress.completed} of {tokenizationProgress.total} lines
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -430,15 +544,19 @@ export default function LyricsScreen() {
         )}
       </div>
 
-      {overlayState && (
+      {activeOverlayState && (
         <YomitanOverlay
           open={overlayTokens.length > 0}
           tokens={overlayTokens}
-          selectedTokenIndex={overlayState.tokenIndex}
+          selectedTokenIndex={activeOverlayState.tokenIndex}
           dictionaries={installedDictionaries}
           enabledDictionaryMap={enabledDictionaryMap}
           onSelectToken={(tokenIndex) => {
-            setOverlayState((current) => (current ? { ...current, tokenIndex } : current));
+            setOverlayState((current) => (
+              current && current.sessionKey === overlaySessionKey
+                ? { ...current, tokenIndex }
+                : current
+            ));
           }}
           onClose={() => setOverlayState(null)}
         />
