@@ -6,6 +6,7 @@ const { playbackManagerMock, syncPositionMock, loadServerQueueMock } = vi.hoiste
     warmup: vi.fn(),
     play: vi.fn(async () => {}),
     hasSource: vi.fn(() => false),
+    consumePendingStorePlaybackSync: vi.fn(() => false),
     resume: vi.fn(async () => {}),
     pause: vi.fn(),
     seek: vi.fn(),
@@ -55,6 +56,8 @@ describe('usePlayback', () => {
     playbackManagerMock.play.mockImplementation(async () => {});
     playbackManagerMock.hasSource.mockReset();
     playbackManagerMock.hasSource.mockReturnValue(false);
+    playbackManagerMock.consumePendingStorePlaybackSync.mockReset();
+    playbackManagerMock.consumePendingStorePlaybackSync.mockReturnValue(false);
     playbackManagerMock.resume.mockReset();
     playbackManagerMock.resume.mockImplementation(async () => {});
     playbackManagerMock.pause.mockReset();
@@ -142,6 +145,32 @@ describe('usePlayback', () => {
     expect(playbackManagerMock.play).not.toHaveBeenCalled();
   });
 
+  it('does not issue a duplicate resume when transport already handled the play action', () => {
+    const song = makeSong('1');
+    usePlayerStore.setState({
+      queue: [song],
+      currentIndex: 0,
+      currentSong: song,
+      isPlaying: false,
+    });
+    playbackManagerMock.hasSource.mockReturnValue(true);
+    playbackManagerMock.consumePendingStorePlaybackSync.mockImplementation((isPlaying: boolean) => isPlaying);
+
+    renderHook(() => usePlayback());
+
+    act(() => {
+      document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    act(() => {
+      usePlayerStore.getState().setPlaying(true);
+    });
+
+    expect(playbackManagerMock.consumePendingStorePlaybackSync).toHaveBeenCalledWith(true);
+    expect(playbackManagerMock.resume).not.toHaveBeenCalled();
+    expect(playbackManagerMock.play).not.toHaveBeenCalled();
+  });
+
   it('pauses and persists position when playback is stopped through the store', () => {
     const song = makeSong('1');
     localStorage.setItem('vibrdrome_queue', JSON.stringify({ positionMs: 10 }));
@@ -166,5 +195,33 @@ describe('usePlayback', () => {
     expect(playbackManagerMock.pause).toHaveBeenCalledTimes(1);
     expect(syncPositionMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(localStorage.getItem('vibrdrome_queue') ?? '{}').positionMs).toBe(4321);
+  });
+
+  it('persists position without a duplicate pause when transport already handled the pause action', () => {
+    const song = makeSong('1');
+    localStorage.setItem('vibrdrome_queue', JSON.stringify({ positionMs: 10 }));
+    usePlayerStore.setState({
+      queue: [song],
+      currentIndex: 0,
+      currentSong: song,
+      isPlaying: true,
+      positionMs: 8765,
+    });
+    playbackManagerMock.consumePendingStorePlaybackSync.mockImplementation((isPlaying: boolean) => !isPlaying);
+
+    renderHook(() => usePlayback());
+
+    act(() => {
+      document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    act(() => {
+      usePlayerStore.getState().setPlaying(false);
+    });
+
+    expect(playbackManagerMock.consumePendingStorePlaybackSync).toHaveBeenCalledWith(false);
+    expect(playbackManagerMock.pause).not.toHaveBeenCalled();
+    expect(syncPositionMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem('vibrdrome_queue') ?? '{}').positionMs).toBe(8765);
   });
 });

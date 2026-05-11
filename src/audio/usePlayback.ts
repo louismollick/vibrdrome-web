@@ -9,6 +9,17 @@ import { syncPosition, loadServerQueue } from '../utils/queueSync';
 // The PlaybackManager is a singleton — grab it once at module level
 const manager = getPlaybackManager();
 
+function persistLocalPosition(positionMs: number): void {
+  try {
+    const raw = localStorage.getItem('vibrdrome_queue');
+    if (raw) {
+      const data = JSON.parse(raw);
+      data.positionMs = positionMs;
+      localStorage.setItem('vibrdrome_queue', JSON.stringify(data));
+    }
+  } catch { /* ignore */ }
+}
+
 export function usePlayback() {
   const initializedRef = useRef(false);
   const playbackSpeed = usePlayerStore((s) => s.playbackSpeed);
@@ -137,6 +148,14 @@ export function usePlayback() {
 
       if (!playingChanged || !state.currentSong || state.radioMode || handledBySongChange) return;
 
+      if (manager.consumePendingStorePlaybackSync(state.isPlaying)) {
+        if (!state.isPlaying) {
+          syncPosition();
+          persistLocalPosition(state.positionMs);
+        }
+        return;
+      }
+
       if (state.isPlaying) {
         if (!manager.hasSource()) {
           manager.play(state.currentSong);
@@ -146,15 +165,7 @@ export function usePlayback() {
       } else {
         manager.pause();
         syncPosition();
-        // Persist position locally for restore on reload
-        try {
-          const raw = localStorage.getItem('vibrdrome_queue');
-          if (raw) {
-            const data = JSON.parse(raw);
-            data.positionMs = state.positionMs;
-            localStorage.setItem('vibrdrome_queue', JSON.stringify(data));
-          }
-        } catch { /* ignore */ }
+        persistLocalPosition(state.positionMs);
       }
     });
 
