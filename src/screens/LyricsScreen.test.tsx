@@ -218,6 +218,38 @@ describe('LyricsScreen', () => {
     });
   });
 
+  it('renders Latin-script lyric segments without making them dictionary tokens', async () => {
+    useUIStore.getState().setLyricsInteractionMode('dictionary');
+    lyricsHookMocks.useCurrentSongLyrics.mockReturnValue({
+      status: 'ready',
+      lyrics: {
+        lang: 'ja',
+        synced: false,
+        line: [
+          { start: 0, value: 'I love 日本語' },
+        ],
+      },
+    });
+    coreMocks.tokenizeText.mockResolvedValue([
+      { text: 'I', reading: '', term: 'I', selectable: false, kind: 'other' },
+      { text: ' ', reading: '', term: ' ', selectable: false, kind: 'other' },
+      { text: 'love', reading: '', term: 'love', selectable: false, kind: 'other' },
+      { text: ' ', reading: '', term: ' ', selectable: false, kind: 'other' },
+      { text: '日本語', reading: 'にほんご', term: '日本語', selectable: true, kind: 'word' },
+    ]);
+
+    renderScreen();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '日本語' })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: 'I' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'love' })).toBeNull();
+    expect(screen.getByText('I')).toBeInTheDocument();
+    expect(screen.getByText('love')).toBeInTheDocument();
+  });
+
   it('shows guidance instead of broken UI when no dictionaries are installed', async () => {
     useUIStore.getState().setLyricsInteractionMode('dictionary');
     coreMocks.getInstalledDictionaries.mockResolvedValue([]);

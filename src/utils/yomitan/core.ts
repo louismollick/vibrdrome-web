@@ -35,13 +35,24 @@ export type YomitanEnabledDictionaryMap = Map<string, { index: number; priority:
 
 let corePromise: Promise<YomitanCoreType> | null = null;
 
+const LATIN_SCRIPT_PATTERN = /\p{Script_Extensions=Latin}/u;
+const JAPANESE_SCRIPT_PATTERN = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
+
 function ensureBrowser() {
   if (typeof window === 'undefined') {
     throw new Error('Yomitan is only available in the browser');
   }
 }
 
+function isYomitanSelectableText(text: string) {
+  if (!text.length) return false;
+  if (LATIN_SCRIPT_PATTERN.test(text)) return false;
+  return JAPANESE_SCRIPT_PATTERN.test(text);
+}
+
 function createToken(text: string, selectable: boolean, reading = ''): YomitanToken {
+  const canSelect = selectable && isYomitanSelectableText(text);
+
   if (!text.length) {
     return {
       text,
@@ -66,8 +77,8 @@ function createToken(text: string, selectable: boolean, reading = ''): YomitanTo
     text,
     reading,
     term: text,
-    selectable,
-    kind: selectable ? 'word' : 'other',
+    selectable: canSelect,
+    kind: canSelect ? 'word' : 'other',
   };
 }
 
