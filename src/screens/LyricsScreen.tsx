@@ -9,11 +9,16 @@ import { Header, LoadingSpinner, StateMessage } from '../components/common';
 import YomitanOverlay from '../components/lyrics/YomitanOverlay';
 import { useCurrentSongLyrics } from '../hooks/useCurrentSongLyrics';
 import { getOfflineMessage } from '../utils/offlineCapability';
-import { getOfflineTokenizedLyrics, putOfflineTokenizedLyrics } from '../utils/offlineLyricsStore';
+import {
+  buildLyricsTokenizationJobKey,
+  clearLyricsTokenizationCache,
+  ensureLyricsTokenization,
+  getLyricsTokenizationSnapshot,
+  subscribeToLyricsTokenization,
+} from '../utils/lyricsTokenizationManager';
 import {
   buildEnabledDictionaryMap,
   getInstalledDictionaries,
-  tokenizeText,
   type YomitanDictionarySummary,
   type YomitanToken,
 } from '../utils/yomitan/core';
@@ -40,15 +45,6 @@ function getCurrentLineIndex(lines: LyricLine[], positionMs: number): number {
   return currentIdx;
 }
 
-function buildTokenCacheKey(
-  serverId: string,
-  songId: string,
-  lineText: string,
-  preferencesFingerprint: string,
-) {
-  return [serverId, songId, lineText, preferencesFingerprint].join('\u241f');
-}
-
 function getSyncedLineClass(index: number, currentIdx: number) {
   if (index === currentIdx) {
     return 'scale-105 text-xl font-bold text-accent';
@@ -63,25 +59,6 @@ function getSyncedLineClass(index: number, currentIdx: number) {
 
 function renderPlainLine(line: LyricLine) {
   return line.value || '\u00A0';
-}
-
-function getTokenizationOrder(lines: LyricLine[], priorityIndex: number) {
-  const indices = lines.map((_, index) => index);
-
-  if (priorityIndex < 0 || priorityIndex >= lines.length) {
-    return indices;
-  }
-
-  return indices.sort((a, b) => {
-    const distanceA = Math.abs(a - priorityIndex);
-    const distanceB = Math.abs(b - priorityIndex);
-
-    if (distanceA !== distanceB) {
-      return distanceA - distanceB;
-    }
-
-    return a - b;
-  });
 }
 
 export default function LyricsScreen() {
@@ -117,7 +94,6 @@ export default function LyricsScreen() {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLineIdxRef = useRef(-1);
   const dictionaryPriorityLineIndexRef = useRef(-1);
-  const tokenCacheRef = useRef<Map<string, YomitanToken[]>>(new Map());
   const offlineLyricsMessage = getOfflineMessage('lyrics');
 
   const currentLineIndex = lyrics?.line ? getCurrentLineIndex(lyrics.line, positionMs) : -1;
@@ -171,7 +147,7 @@ export default function LyricsScreen() {
     if (typeof window === 'undefined') return;
 
     const handleDictionaryStateChanged = () => {
-      tokenCacheRef.current.clear();
+      clearLyricsTokenizationCache();
       if (lyricsInteractionMode === 'dictionary') {
         void refreshDictionaryState();
       }
@@ -203,116 +179,31 @@ export default function LyricsScreen() {
       return;
     }
 
-    let cancelled = false;
-
-    const tokenizeLines = async () => {
-      const persistedTokenizedLyrics = await getOfflineTokenizedLyrics(
-        activeServerId,
-        currentSong.id,
-        dictionaryPreferenceFingerprint,
-      );
-      if (cancelled) return;
-
-      const orderedIndices = getTokenizationOrder(
-        lyrics.line!,
-        lyrics.synced ? dictionaryPriorityLineIndexRef.current : -1,
-      );
-      const cachedLines: Record<number, YomitanToken[]> = {};
-      const workQueue: Array<{ index: number; line: LyricLine; key: string }> = [];
-
-      for (const index of orderedIndices) {
-        const line = lyrics.line![index];
-        const key = buildTokenCacheKey(
-          activeServerId,
-          currentSong.id,
-          line.value,
-          dictionaryPreferenceFingerprint,
-        );
-        const cachedTokens = tokenCacheRef.current.get(key) ?? persistedTokenizedLyrics?.[line.value];
-
-        if (cachedTokens) {
-          tokenCacheRef.current.set(key, cachedTokens);
-          cachedLines[index] = cachedTokens;
-          continue;
-        }
-
-        workQueue.push({ index, line, key });
-      }
-
-      if (cancelled) return;
-
-      setTokenizedLines(cachedLines);
-
-      const total = orderedIndices.length;
-      let completed = total - workQueue.length;
-
-      setTokenizationProgress({
-        status: workQueue.length === 0 ? 'ready' : 'loading',
-        completed,
-        total,
-      });
-
-      if (workQueue.length === 0) {
-        return;
-      }
-
-      const batchSize = 1;
-      const nextPersistedTokenizedLyrics: Record<string, YomitanToken[]> = {};
-
-      for (let offset = 0; offset < workQueue.length; offset += batchSize) {
-        const batch = workQueue.slice(offset, offset + batchSize);
-        const resolvedBatch = await Promise.all(
-          batch.map(async ({ index, line, key }) => {
-            const tokens = await tokenizeText(line.value, enabledDictionaryMap);
-            tokenCacheRef.current.set(key, tokens);
-            return { index, lineValue: line.value, tokens };
-          }),
-        );
-
-        if (cancelled) return;
-
-        setTokenizedLines((current) => {
-          const next = { ...current };
-
-          for (const { index, tokens } of resolvedBatch) {
-            next[index] = tokens;
-          }
-
-          return next;
-        });
-
-        completed += resolvedBatch.length;
-
-        for (const { lineValue, tokens } of resolvedBatch) {
-          nextPersistedTokenizedLyrics[lineValue] = tokens;
-        }
-
-        setTokenizationProgress({
-          status: completed >= total ? 'ready' : 'loading',
-          completed,
-          total,
-        });
-
-        if (completed < total) {
-          await new Promise((resolve) => window.setTimeout(resolve, 0));
-        }
-      }
-
-      if (Object.keys(nextPersistedTokenizedLyrics).length > 0) {
-        await putOfflineTokenizedLyrics(
-          activeServerId,
-          currentSong.id,
-          dictionaryPreferenceFingerprint,
-          nextPersistedTokenizedLyrics,
-        );
-      }
+    const jobKey = buildLyricsTokenizationJobKey(
+      activeServerId,
+      currentSong.id,
+      dictionaryPreferenceFingerprint,
+    );
+    const syncSnapshot = () => {
+      const snapshot = getLyricsTokenizationSnapshot(jobKey);
+      setTokenizedLines(snapshot.tokenizedLines);
+      setTokenizationProgress(snapshot.progress);
     };
 
-    void tokenizeLines();
+    syncSnapshot();
+    const unsubscribe = subscribeToLyricsTokenization(jobKey, syncSnapshot);
 
-    return () => {
-      cancelled = true;
-    };
+    void ensureLyricsTokenization({
+      jobKey,
+      serverId: activeServerId,
+      songId: currentSong.id,
+      lines: lyrics.line,
+      priorityIndex: lyrics.synced ? dictionaryPriorityLineIndexRef.current : -1,
+      preferencesFingerprint: dictionaryPreferenceFingerprint,
+      enabledDictionaryMap,
+    });
+
+    return unsubscribe;
   }, [
     activeServerId,
     currentSong?.id,

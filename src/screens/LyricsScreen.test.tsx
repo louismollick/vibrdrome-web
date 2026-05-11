@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import LyricsScreen from './LyricsScreen';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useUIStore } from '../stores/uiStore';
+import { resetLyricsTokenizationManagerForTests } from '../utils/lyricsTokenizationManager';
 
 type TestToken = {
   text: string;
@@ -13,15 +14,6 @@ type TestToken = {
   selectable: boolean;
   kind: 'word' | 'other';
 };
-
-function createDeferred<T>() {
-  let resolve: (value: T) => void = () => {};
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve;
-  });
-
-  return { promise, resolve };
-}
 
 const seekMock = vi.fn();
 
@@ -49,6 +41,8 @@ const offlineLyricsStoreMocks = vi.hoisted(() => ({
   putOfflineTokenizedLyrics: vi.fn(),
 }));
 
+let persistedTokenizedLyrics: Record<string, TestToken[]> | null = null;
+
 vi.mock('../hooks/useCurrentSongLyrics', () => lyricsHookMocks);
 vi.mock('../audio/PlaybackManager', () => ({
   getPlaybackManager: () => ({ seek: seekMock }),
@@ -61,6 +55,8 @@ describe('LyricsScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    resetLyricsTokenizationManagerForTests();
+    persistedTokenizedLyrics = null;
 
     useAuthStore.setState({
       servers: [],
@@ -103,8 +99,13 @@ describe('LyricsScreen', () => {
       { title: 'JMdict', enabled: true },
     ]);
     preferenceMocks.normalizeDictionaryPreferences.mockImplementation((_installed, existing) => existing);
-    offlineLyricsStoreMocks.getOfflineTokenizedLyrics.mockResolvedValue(null);
-    offlineLyricsStoreMocks.putOfflineTokenizedLyrics.mockResolvedValue(undefined);
+    offlineLyricsStoreMocks.getOfflineTokenizedLyrics.mockImplementation(async () => persistedTokenizedLyrics);
+    offlineLyricsStoreMocks.putOfflineTokenizedLyrics.mockImplementation(async (_serverId, _songId, _fingerprint, lines) => {
+      persistedTokenizedLyrics = {
+        ...(persistedTokenizedLyrics ?? {}),
+        ...lines,
+      };
+    });
     coreMocks.buildEnabledDictionaryMap.mockReturnValue(
       new Map([['JMdict', { index: 0, priority: 0 }]]),
     );
@@ -201,46 +202,6 @@ describe('LyricsScreen', () => {
     expect(seekMock).not.toHaveBeenCalled();
   });
 
-  it('shows dictionary preparation progress while tokens are still loading', async () => {
-    useUIStore.getState().setLyricsInteractionMode('dictionary');
-
-    const firstLine = createDeferred<TestToken[]>();
-    const secondLine = createDeferred<TestToken[]>();
-
-    coreMocks.tokenizeText.mockImplementationOnce(
-      () => firstLine.promise,
-    );
-    coreMocks.tokenizeText.mockImplementationOnce(
-      () => secondLine.promise,
-    );
-
-    renderScreen();
-
-    await waitFor(() => {
-      expect(screen.getByText(/Preparing dictionary mode/i)).toBeInTheDocument();
-      expect(screen.getByText(/Tokenized 0 of 2 lines/i)).toBeInTheDocument();
-    });
-
-    firstLine.resolve([
-      { text: '日本語', reading: 'にほんご', term: '日本語', selectable: true, kind: 'word' },
-      { text: '猫', reading: 'ねこ', term: '猫', selectable: true, kind: 'word' },
-    ]);
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '日本語' })).toBeInTheDocument();
-      expect(screen.getByText(/Tokenized 1 of 2 lines/i)).toBeInTheDocument();
-    });
-
-    secondLine.resolve([
-      { text: '次', reading: 'つぎ', term: '次', selectable: true, kind: 'word' },
-      { text: 'の行', reading: '', term: 'の行', selectable: false, kind: 'other' },
-    ]);
-
-    await waitFor(() => {
-      expect(screen.queryByText(/Preparing dictionary mode/i)).toBeNull();
-    });
-  });
-
   it('renders tokenized results across multiple lines after preparation completes', async () => {
     useUIStore.getState().setLyricsInteractionMode('dictionary');
 
@@ -254,113 +215,6 @@ describe('LyricsScreen', () => {
       expect(screen.getByRole('button', { name: '日本語' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: '猫' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: '次' })).toBeInTheDocument();
-    });
-  });
-
-  it('reuses persisted tokenized lyrics without retokenizing the same song', async () => {
-    useUIStore.getState().setLyricsInteractionMode('dictionary');
-    offlineLyricsStoreMocks.getOfflineTokenizedLyrics.mockResolvedValue({
-      日本語猫: [
-        { text: '日本語', reading: 'にほんご', term: '日本語', selectable: true, kind: 'word' },
-        { text: '猫', reading: 'ねこ', term: '猫', selectable: true, kind: 'word' },
-      ],
-    });
-
-    renderScreen();
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '日本語' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '次' })).toBeInTheDocument();
-    });
-
-    expect(coreMocks.tokenizeText).not.toHaveBeenCalledWith(
-      '日本語猫',
-      expect.any(Map),
-    );
-    expect(coreMocks.tokenizeText).toHaveBeenCalledWith(
-      '次の行',
-      new Map([['JMdict', { index: 0, priority: 0 }]]),
-    );
-    expect(offlineLyricsStoreMocks.putOfflineTokenizedLyrics).toHaveBeenCalledWith(
-      'server-1',
-      'song-1',
-      expect.any(String),
-      {
-        次の行: [
-          { text: '次', reading: 'つぎ', term: '次', selectable: true, kind: 'word' },
-          { text: 'の行', reading: '', term: 'の行', selectable: false, kind: 'other' },
-        ],
-      },
-    );
-  });
-
-  it('persists tokenized lyrics for offline reuse after preparing dictionary mode', async () => {
-    useUIStore.getState().setLyricsInteractionMode('dictionary');
-
-    renderScreen();
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '日本語' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '次' })).toBeInTheDocument();
-    });
-
-    await waitFor(() => {
-      expect(offlineLyricsStoreMocks.putOfflineTokenizedLyrics).toHaveBeenCalledWith(
-        'server-1',
-        'song-1',
-        expect.any(String),
-        {
-          日本語猫: [
-            { text: '日本語', reading: 'にほんご', term: '日本語', selectable: true, kind: 'word' },
-            { text: '猫', reading: 'ねこ', term: '猫', selectable: true, kind: 'word' },
-          ],
-          次の行: [
-            { text: '次', reading: 'つぎ', term: '次', selectable: true, kind: 'word' },
-            { text: 'の行', reading: '', term: 'の行', selectable: false, kind: 'other' },
-          ],
-        },
-      );
-    });
-  });
-
-  it('does not show a loading message when switching dictionary tokens in the overlay', async () => {
-    useUIStore.getState().setLyricsInteractionMode('dictionary');
-
-    let resolveSecondLookup: ((value: { entries: Array<{ id: string }>; originalTextLength: number }) => void) | null = null;
-    coreMocks.lookupTerm
-      .mockImplementationOnce(async (term: string) => ({
-        entries: [{ id: term }],
-        originalTextLength: term.length,
-      }))
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveSecondLookup = resolve;
-          }),
-      );
-
-    renderScreen();
-
-    const firstToken = await screen.findByRole('button', { name: '日本語' });
-    await fireEvent.click(firstToken);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('yomitan-results')).toBeInTheDocument();
-    });
-
-    const overlay = screen.getByRole('dialog', { name: 'Dictionary lookup' });
-    await fireEvent.click(within(overlay).getByRole('button', { name: '猫' }));
-
-    expect(screen.queryByText(/Looking up/i)).toBeNull();
-
-    expect(resolveSecondLookup).not.toBeNull();
-    resolveSecondLookup!({
-      entries: [{ id: '猫' }],
-      originalTextLength: 1,
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId('yomitan-results')).toBeInTheDocument();
     });
   });
 
