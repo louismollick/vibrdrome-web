@@ -260,6 +260,8 @@ class PlaybackManager {
       this.startPositionTracking();
       return;
     }
+    this.configureAudioSession();
+    this.applyElementVolume();
     if (this.audioContext?.state === 'suspended') {
       await this.audioContext.resume();
     }
@@ -349,7 +351,9 @@ class PlaybackManager {
   }
 
   resumeRadio(): void {
+    this.configureAudioSession();
     if (this.radioAudio) {
+      this.radioAudio.volume = Math.max(0, Math.min(1, this.currentVolume));
       this.radioAudio.play().catch(() => { /* ignore */ });
     }
     this.setMediaSessionPlaybackState('playing');
@@ -880,12 +884,10 @@ class PlaybackManager {
     });
 
     this.setMediaSessionActionHandler('play', () => {
-      this.resume();
       usePlayerStore.getState().setPlaying(true);
     });
 
     this.setMediaSessionActionHandler('pause', () => {
-      this.pause();
       usePlayerStore.getState().setPlaying(false);
     });
 
