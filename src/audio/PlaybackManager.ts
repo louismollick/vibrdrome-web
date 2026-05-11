@@ -83,6 +83,10 @@ class PlaybackManager {
   // Suppresses the external-pause handler while we pause the audio element
   // internally (e.g. during play() source swap, crossfade, gapless handoff).
   private internalPause = false;
+  // Media-session handlers update the store after they already drove transport.
+  // Consume that mirrored store change so usePlayback doesn't issue duplicate
+  // pause/resume commands on the same audio element.
+  private pendingStorePlaybackSync: 'play' | 'pause' | null = null;
 
   constructor() {
     this.playerA = new Audio();
@@ -371,6 +375,23 @@ class PlaybackManager {
         audioContextState: this.audioContext.state,
       });
     }
+    if (this.shouldUseHiddenBackgroundResumeSwap()) {
+      try {
+        await this.resumeViaBackgroundSwap();
+        this.debugLog('resume:resolved', {
+          activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+        });
+        this.setMediaSessionPlaybackState('playing');
+        this.updateMediaSessionPosition();
+        this.startPositionTracking();
+        return;
+      } catch (err) {
+        this.debugLog('resume:hidden-swap:rejected', {
+          error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
+          activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+        });
+      }
+    }
     try {
       await this.getActiveAudio().play();
       this.debugLog('resume:resolved', {
@@ -390,6 +411,19 @@ class PlaybackManager {
 
   hasSource(): boolean {
     return !!this.getActiveAudio().src && this.getActiveAudio().src !== window.location.href;
+  }
+
+  consumePendingStorePlaybackSync(isPlaying: boolean): boolean {
+    const expectedCommand = isPlaying ? 'play' : 'pause';
+    if (this.pendingStorePlaybackSync !== expectedCommand) return false;
+    this.pendingStorePlaybackSync = null;
+    return true;
+  }
+
+  private shouldUseHiddenBackgroundResumeSwap(): boolean {
+    if (!this.backgroundSafeMode || !this.hasSource() || !isStandalonePWA()) return false;
+    if (typeof document === 'undefined') return false;
+    return document.hidden;
   }
 
   async playRadio(streamUrl: string): Promise<void> {
@@ -670,6 +704,106 @@ class PlaybackManager {
 
   private getAudioForPlayer(player: 'A' | 'B'): HTMLAudioElement {
     return player === 'A' ? this.playerA : this.playerB;
+  }
+
+  private waitForLoadedMetadata(audio: HTMLAudioElement): Promise<void> {
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA || Number.isFinite(audio.duration)) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const cleanup = () => {
+        audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        audio.removeEventListener('error', handleError);
+        clearTimeout(timeoutId);
+      };
+
+      const handleLoadedMetadata = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const handleError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('Audio metadata failed to load during background resume'));
+      };
+
+      const timeoutId = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('Timed out waiting for audio metadata during background resume'));
+      }, 1500);
+
+      audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.addEventListener('error', handleError);
+    });
+  }
+
+  private async resumeViaBackgroundSwap(): Promise<void> {
+    const previousPlayer = this.activePlayer;
+    const previousAudio = this.getActiveAudio();
+    const targetPlayer = previousPlayer === 'A' ? 'B' : 'A';
+    const targetAudio = this.getAudioForPlayer(targetPlayer);
+    const resumeSrc = previousAudio.currentSrc || previousAudio.src;
+    const resumeTime = Number.isFinite(previousAudio.currentTime) ? previousAudio.currentTime : 0;
+    const playbackRate = previousAudio.playbackRate || 1;
+
+    if (!resumeSrc || resumeSrc === window.location.href) {
+      throw new Error('No resumable audio source available for background swap');
+    }
+
+    this.debugLog('resume:hidden-swap:start', {
+      previousPlayer,
+      targetPlayer,
+      resumeTime,
+      previousAudio: this.describeAudio(previousAudio, previousPlayer),
+      targetAudio: this.describeAudio(targetAudio, targetPlayer),
+    });
+
+    this.internalPause = true;
+    targetAudio.pause();
+    targetAudio.src = '';
+    targetAudio.load();
+    this.internalPause = false;
+
+    targetAudio.playbackRate = playbackRate;
+    targetAudio.src = resumeSrc;
+    targetAudio.load();
+    this.applyElementVolume();
+
+    if (resumeTime > 0) {
+      await this.waitForLoadedMetadata(targetAudio);
+      targetAudio.currentTime = resumeTime;
+    }
+
+    await targetAudio.play();
+
+    this.activePlayer = targetPlayer;
+    this.internalPause = true;
+    previousAudio.pause();
+    previousAudio.src = '';
+    previousAudio.load();
+    this.internalPause = false;
+
+    if (!Number.isNaN(targetAudio.duration)) {
+      usePlayerStore.getState().setDuration(Math.round(targetAudio.duration * 1000));
+    }
+    usePlayerStore.getState().setPosition(Math.round(targetAudio.currentTime * 1000));
+    this.applyElementVolume();
+
+    this.debugLog('resume:hidden-swap:resolved', {
+      previousPlayer,
+      targetPlayer,
+      activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
+      previousAudio: this.describeAudio(previousAudio, previousPlayer),
+    });
   }
 
   private setupAudioChain(): void {
@@ -1005,7 +1139,11 @@ class PlaybackManager {
         activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
       });
       void this.resume();
-      usePlayerStore.getState().setPlaying(true);
+      const store = usePlayerStore.getState();
+      if (!store.isPlaying) {
+        this.pendingStorePlaybackSync = 'play';
+        store.setPlaying(true);
+      }
     });
 
     this.setMediaSessionActionHandler('pause', () => {
@@ -1013,7 +1151,11 @@ class PlaybackManager {
         activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
       });
       this.pause();
-      usePlayerStore.getState().setPlaying(false);
+      const store = usePlayerStore.getState();
+      if (store.isPlaying) {
+        this.pendingStorePlaybackSync = 'pause';
+        store.setPlaying(false);
+      }
     });
 
     this.setMediaSessionActionHandler('previoustrack', () => {
