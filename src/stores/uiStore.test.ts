@@ -12,6 +12,8 @@ beforeEach(() => {
     epilepsyWarningDismissed: false,
     commandPaletteOpen: false,
     popOutPlayerOpen: false,
+    queueSyncEnabled: false,
+    libraryAutoSyncEnabled: false,
   });
 });
 
@@ -118,6 +120,17 @@ describe('uiStore', () => {
     it('can be dismissed', () => {
       useUIStore.getState().setEpilepsyWarningDismissed(true);
       expect(useUIStore.getState().epilepsyWarningDismissed).toBe(true);
+    });
+  });
+
+  describe('libraryAutoSync', () => {
+    it('defaults to disabled', () => {
+      expect(useUIStore.getState().libraryAutoSyncEnabled).toBe(false);
+    });
+
+    it('can be enabled', () => {
+      useUIStore.getState().setLibraryAutoSyncEnabled(true);
+      expect(useUIStore.getState().libraryAutoSyncEnabled).toBe(true);
     });
   });
 });

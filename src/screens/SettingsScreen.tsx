@@ -10,13 +10,15 @@ import { getOfflineMessage } from '../utils/offlineCapability';
 import { exportSettings, importSettings } from '../utils/settingsIO';
 import { Header } from '../components/common';
 import ThemePicker from '../components/settings/ThemePicker';
+import { useDownloadStore } from '../stores/downloadStore';
 
 export default function SettingsScreen() {
   const navigate = useNavigate();
   const { servers, activeServerId, logout } = useAuthStore();
   const { accentColor, setAccentColor, lastfmApiKey, setLastfmApiKey, reduceMotion, setReduceMotion, keyboardShortcutsEnabled, setKeyboardShortcutsEnabled, streamQuality, setStreamQuality } = useUIStore();
   const { crossfadeEnabled, crossfadeDuration, setCrossfade, setCrossfadeDuration, gaplessEnabled, setGapless } = usePlayerStore();
-  const { sleepFadeDuration, setSleepFadeDuration, notificationsEnabled, setNotificationsEnabled, replayGainMode, setReplayGainMode, queueSyncEnabled, setQueueSyncEnabled } = useUIStore();
+  const { sleepFadeDuration, setSleepFadeDuration, notificationsEnabled, setNotificationsEnabled, replayGainMode, setReplayGainMode, queueSyncEnabled, setQueueSyncEnabled, libraryAutoSyncEnabled, setLibraryAutoSyncEnabled } = useUIStore();
+  const { isLibrarySyncing, lastLibrarySyncAt, librarySyncError } = useDownloadStore();
   const eqEnabled = useEQStore((s) => s.enabled);
   const isOnline = useOnlineStatus();
   const serverManagerOfflineMessage = getOfflineMessage('serverManager');
@@ -386,6 +388,38 @@ export default function SettingsScreen() {
               Storage
             </h2>
             <div className="rounded-lg bg-bg-secondary p-4">
+              <div className="flex items-center justify-between gap-3 pb-3">
+                <div>
+                  <span className="text-sm text-text-primary">Sync Offline Library</span>
+                  <p className="text-xs text-text-muted">Automatically download missing songs and remove songs deleted from this server</p>
+                  {libraryAutoSyncEnabled && isLibrarySyncing && (
+                    <p className="mt-1 text-[10px] text-accent">Syncing library…</p>
+                  )}
+                  {libraryAutoSyncEnabled && !isLibrarySyncing && librarySyncError && (
+                    <p className="mt-1 text-[10px] text-red-400">{librarySyncError}</p>
+                  )}
+                  {libraryAutoSyncEnabled && !isLibrarySyncing && !librarySyncError && lastLibrarySyncAt && (
+                    <p className="mt-1 text-[10px] text-text-muted">
+                      Last synced {new Date(lastLibrarySyncAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={libraryAutoSyncEnabled}
+                  onClick={() => setLibraryAutoSyncEnabled(!libraryAutoSyncEnabled)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                    libraryAutoSyncEnabled ? 'bg-accent' : 'bg-bg-tertiary'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                      libraryAutoSyncEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
               <button
                 onClick={handleClearCache}
                 className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"

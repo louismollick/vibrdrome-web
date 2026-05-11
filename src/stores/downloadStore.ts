@@ -70,6 +70,9 @@ interface DownloadState {
   cachedSongs: Map<string, CachedSong>;
   totalCachedSize: number;
   isDownloading: boolean;
+  isLibrarySyncing: boolean;
+  lastLibrarySyncAt: number | null;
+  librarySyncError: string | null;
 
   addToQueue: (songs: Song[], albumId?: string) => void;
   removeFromQueue: (cacheId: string) => void;
@@ -82,6 +85,8 @@ interface DownloadState {
   finishQueueItem: (cacheId: string) => void;
   markError: (cacheId: string) => void;
   setDownloading: (active: boolean) => void;
+  setLibrarySyncing: (active: boolean) => void;
+  setLibrarySyncStatus: (updates: { lastLibrarySyncAt?: number | null; librarySyncError?: string | null }) => void;
   removeFromCache: (cacheId: string) => Promise<void>;
   clearAllCached: () => void;
   loadCachedSongs: () => Promise<void>;
@@ -177,6 +182,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   cachedSongs: new Map(),
   totalCachedSize: 0,
   isDownloading: false,
+  isLibrarySyncing: false,
+  lastLibrarySyncAt: null,
+  librarySyncError: null,
 
   addToQueue: (songs, albumId) => {
     const { activeServerId, servers } = useAuthStore.getState();
@@ -363,6 +371,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
 
   setDownloading: (active) => set({ isDownloading: active }),
+  setLibrarySyncing: (active) => set({ isLibrarySyncing: active }),
+  setLibrarySyncStatus: (updates) => set((state) => ({
+    lastLibrarySyncAt: updates.lastLibrarySyncAt ?? state.lastLibrarySyncAt,
+    librarySyncError: updates.librarySyncError ?? state.librarySyncError,
+  })),
 
   removeFromCache: async (cacheId) => {
     const cached = get().cachedSongs.get(cacheId);
