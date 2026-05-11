@@ -14,6 +14,15 @@ type TestToken = {
   kind: 'word' | 'other';
 };
 
+function createDeferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+
+  return { promise, resolve };
+}
+
 const seekMock = vi.fn();
 
 const lyricsHookMocks = vi.hoisted(() => ({
@@ -187,20 +196,14 @@ describe('LyricsScreen', () => {
   it('shows dictionary preparation progress while tokens are still loading', async () => {
     useUIStore.getState().setLyricsInteractionMode('dictionary');
 
-    let resolveFirstLine: ((value: TestToken[]) => void) | null = null;
-    let resolveSecondLine: ((value: TestToken[]) => void) | null = null;
+    const firstLine = createDeferred<TestToken[]>();
+    const secondLine = createDeferred<TestToken[]>();
 
     coreMocks.tokenizeText.mockImplementationOnce(
-      () =>
-        new Promise<TestToken[]>((resolve) => {
-          resolveFirstLine = resolve;
-        }),
+      () => firstLine.promise,
     );
     coreMocks.tokenizeText.mockImplementationOnce(
-      () =>
-        new Promise<TestToken[]>((resolve) => {
-          resolveSecondLine = resolve;
-        }),
+      () => secondLine.promise,
     );
 
     renderScreen();
@@ -210,7 +213,7 @@ describe('LyricsScreen', () => {
       expect(screen.getByText(/Tokenized 0 of 2 lines/i)).toBeInTheDocument();
     });
 
-    resolveFirstLine?.([
+    firstLine.resolve([
       { text: '日本語', reading: 'にほんご', term: '日本語', selectable: true, kind: 'word' },
       { text: '猫', reading: 'ねこ', term: '猫', selectable: true, kind: 'word' },
     ]);
@@ -220,7 +223,7 @@ describe('LyricsScreen', () => {
       expect(screen.getByText(/Tokenized 1 of 2 lines/i)).toBeInTheDocument();
     });
 
-    resolveSecondLine?.([
+    secondLine.resolve([
       { text: '次', reading: 'つぎ', term: '次', selectable: true, kind: 'word' },
       { text: 'の行', reading: '', term: 'の行', selectable: false, kind: 'other' },
     ]);
