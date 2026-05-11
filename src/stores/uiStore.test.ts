@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useUIStore } from './uiStore';
 
 beforeEach(() => {
+  localStorage.clear();
   useUIStore.setState({
     theme: 'system',
     accentColor: '#8b5cf6',
@@ -14,6 +15,7 @@ beforeEach(() => {
     popOutPlayerOpen: false,
     queueSyncEnabled: false,
     libraryAutoSyncEnabled: false,
+    lyricsInteractionMode: 'seek',
   });
 });
 
@@ -131,6 +133,31 @@ describe('uiStore', () => {
     it('can be enabled', () => {
       useUIStore.getState().setLibraryAutoSyncEnabled(true);
       expect(useUIStore.getState().libraryAutoSyncEnabled).toBe(true);
+    });
+  });
+
+  describe('lyricsInteractionMode', () => {
+    it('defaults to seek on fresh storage', async () => {
+      localStorage.clear();
+      vi.resetModules();
+      const { useUIStore: reloadedStore } = await import('./uiStore');
+
+      expect(reloadedStore.getState().lyricsInteractionMode).toBe('seek');
+    });
+
+    it('persists the selected mode to localStorage', () => {
+      useUIStore.getState().setLyricsInteractionMode('dictionary');
+
+      expect(useUIStore.getState().lyricsInteractionMode).toBe('dictionary');
+      expect(localStorage.getItem('vibrdrome_lyrics_interaction_mode')).toBe('dictionary');
+    });
+
+    it('restores dictionary mode after reloading the store', async () => {
+      localStorage.setItem('vibrdrome_lyrics_interaction_mode', 'dictionary');
+      vi.resetModules();
+      const { useUIStore: reloadedStore } = await import('./uiStore');
+
+      expect(reloadedStore.getState().lyricsInteractionMode).toBe('dictionary');
     });
   });
 });
