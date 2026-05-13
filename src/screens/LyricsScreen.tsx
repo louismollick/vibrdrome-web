@@ -274,8 +274,9 @@ export default function LyricsScreen() {
           strokeWidth={2}
           className="h-4 w-4"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h8M4 12h16M4 18h8" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 6l5 6-5 6" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 5v14l8-7-8-7z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M13 5v14l8-7-8-7z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 5v14" />
         </svg>
       </button>
       <button
@@ -296,8 +297,9 @@ export default function LyricsScreen() {
           strokeWidth={2}
           className="h-4 w-4"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 19.5A2.5 2.5 0 016.5 17H20" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 17A2.5 2.5 0 014 14.5v-9A2.5 2.5 0 016.5 3H20v14" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7a3 3 0 00-3-3H5v13a3 3 0 013-3h4V7z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7a3 3 0 013-3h4v13a3 3 0 00-3-3h-4V7z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v7" />
         </svg>
       </button>
     </div>
