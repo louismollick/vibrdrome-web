@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { clearOfflineTokenizedLyrics } from '../../utils/offlineLyricsStore';
+import { clearLyricsTokenizationCache } from '../../utils/lyricsTokenizationManager';
 import {
   deleteDictionary,
   getInstalledDictionaries,
@@ -62,6 +64,7 @@ export default function YomitanSettings() {
     message: 'Load dictionaries to manage lookup order and enabled state.',
   });
   const [installingRecommended, setInstallingRecommended] = useState(false);
+  const [clearingTokenizationCache, setClearingTokenizationCache] = useState(false);
 
   const preferenceMap = useMemo(
     () => new Map(preferences.map((item, index) => [item.title, { preference: item, index }])),
@@ -249,6 +252,34 @@ export default function YomitanSettings() {
     }
   };
 
+  const handleClearTokenizationCache = async () => {
+    setClearingTokenizationCache(true);
+    setStatus({
+      tone: 'neutral',
+      message: 'Clearing cached lyric tokenization…',
+    });
+
+    try {
+      const cleared = await clearOfflineTokenizedLyrics();
+      clearLyricsTokenizationCache();
+      setStatus({
+        tone: 'success',
+        message:
+          cleared > 0
+            ? `Cleared cached lyric tokenization for ${cleared} song${cleared === 1 ? '' : 's'}.`
+            : 'No cached lyric tokenization was stored.',
+      });
+    } catch (error) {
+      console.error('Failed clearing lyric tokenization cache:', error);
+      setStatus({
+        tone: 'error',
+        message: 'Failed to clear cached lyric tokenization.',
+      });
+    } finally {
+      setClearingTokenizationCache(false);
+    }
+  };
+
   return (
     <section>
       <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted">
@@ -275,17 +306,24 @@ export default function YomitanSettings() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => void handleInstallRecommended()}
-            disabled={installingRecommended || loading}
+            disabled={installingRecommended || clearingTokenizationCache || loading}
             className="rounded-lg border border-border px-3 py-2 text-sm text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             {installingRecommended ? 'Installing…' : 'Install recommended dictionaries'}
           </button>
           <button
             onClick={() => void refreshDictionaries()}
-            disabled={loading}
+            disabled={clearingTokenizationCache || loading}
             className="rounded-lg border border-border px-3 py-2 text-sm text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             Refresh
+          </button>
+          <button
+            onClick={() => void handleClearTokenizationCache()}
+            disabled={installingRecommended || clearingTokenizationCache || loading}
+            className="rounded-lg border border-border px-3 py-2 text-sm text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {clearingTokenizationCache ? 'Clearing tokenization cache…' : 'Clear tokenization cache'}
           </button>
         </div>
 

@@ -30,8 +30,18 @@ const preferenceMocks = vi.hoisted(() => ({
   }),
 }));
 
+const offlineLyricsStoreMocks = vi.hoisted(() => ({
+  clearOfflineTokenizedLyrics: vi.fn(),
+}));
+
+const tokenizationManagerMocks = vi.hoisted(() => ({
+  clearLyricsTokenizationCache: vi.fn(),
+}));
+
 vi.mock('../../utils/yomitan/core', () => coreMocks);
 vi.mock('../../utils/yomitan/preferences', () => preferenceMocks);
+vi.mock('../../utils/offlineLyricsStore', () => offlineLyricsStoreMocks);
+vi.mock('../../utils/lyricsTokenizationManager', () => tokenizationManagerMocks);
 
 describe('YomitanSettings', () => {
   beforeEach(() => {
@@ -45,6 +55,7 @@ describe('YomitanSettings', () => {
     ]);
     coreMocks.importDictionaryZip.mockResolvedValue({});
     coreMocks.deleteDictionary.mockResolvedValue(undefined);
+    offlineLyricsStoreMocks.clearOfflineTokenizedLyrics.mockResolvedValue(2);
     preferenceMocks.loadDictionaryPreferences.mockReturnValue([
       { title: 'JMdict', enabled: true },
       { title: 'KANJIDIC', enabled: true },
@@ -136,6 +147,19 @@ describe('YomitanSettings', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/currently require a Vercel deployment/i)).toBeInTheDocument();
+    });
+  });
+
+  it('clears persisted lyric tokenization cache from settings', async () => {
+    render(<YomitanSettings />);
+    await waitFor(() => expect(coreMocks.getInstalledDictionaries).toHaveBeenCalled());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear tokenization cache' }));
+
+    await waitFor(() => {
+      expect(offlineLyricsStoreMocks.clearOfflineTokenizedLyrics).toHaveBeenCalledTimes(1);
+      expect(tokenizationManagerMocks.clearLyricsTokenizationCache).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Cleared cached lyric tokenization for 2 songs.')).toBeInTheDocument();
     });
   });
 });

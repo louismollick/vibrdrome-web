@@ -98,6 +98,32 @@ export async function putOfflineTokenizedLyrics(
   }
 }
 
+export async function clearOfflineTokenizedLyrics(): Promise<number> {
+  try {
+    const db = await getDB();
+    const entries = await db.getAll(STORE_NAME) as OfflineLyricsRecord[];
+    let cleared = 0;
+
+    for (const entry of entries) {
+      if (!entry.tokenizedLyrics || Object.keys(entry.tokenizedLyrics).length === 0) {
+        continue;
+      }
+
+      const nextEntry: OfflineLyricsRecord = { ...entry };
+      delete nextEntry.tokenizedLyrics;
+      await db.put(STORE_NAME, {
+        ...nextEntry,
+        cachedAt: Date.now(),
+      } satisfies OfflineLyricsRecord);
+      cleared += 1;
+    }
+
+    return cleared;
+  } catch {
+    return 0;
+  }
+}
+
 export async function deleteOfflineLyrics(serverId: string, songId: string): Promise<void> {
   try {
     const db = await getDB();
