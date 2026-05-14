@@ -291,15 +291,15 @@ export default function LyricsScreen() {
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
+          viewBox="0 0 32 32"
           fill="none"
           stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
           strokeWidth={2}
           className="h-4 w-4"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7a3 3 0 00-3-3H5v13a3 3 0 013-3h4V7z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7a3 3 0 013-3h4v13a3 3 0 00-3-3h-4V7z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v7" />
+          <path d="M16 7S9 1 2 6v22c7-5 14 0 14 0s7-5 14 0V6c-7-5-14 1-14 1m0 0v21" />
         </svg>
       </button>
     </div>
