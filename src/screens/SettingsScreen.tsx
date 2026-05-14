@@ -10,6 +10,7 @@ import { getOfflineMessage } from '../utils/offlineCapability';
 import { exportSettings, importSettings } from '../utils/settingsIO';
 import { Header } from '../components/common';
 import ThemePicker from '../components/settings/ThemePicker';
+import YomitanSettings from '../components/settings/YomitanSettings';
 import { useDownloadStore } from '../stores/downloadStore';
 
 export default function SettingsScreen() {
@@ -381,6 +382,8 @@ export default function SettingsScreen() {
 
             </div>
           </section>
+
+          <YomitanSettings />
 
           {/* Storage */}
           <section>

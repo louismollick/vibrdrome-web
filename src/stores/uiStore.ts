@@ -12,9 +12,11 @@ const SLEEP_FADE_KEY = 'vibrdrome_sleep_fade_duration';
 const REPLAYGAIN_MODE_KEY = 'vibrdrome_replaygain_mode';
 const QUEUE_SYNC_KEY = 'vibrdrome_queue_sync';
 const LIBRARY_AUTO_SYNC_KEY = 'vibrdrome_library_auto_sync';
+const LYRICS_INTERACTION_MODE_KEY = 'vibrdrome_lyrics_interaction_mode';
 const DEFAULT_ACCENT = '#8b5cf6';
 
 type Theme = 'system' | 'dark' | 'light' | 'apple' | 'apple-dark' | 'retro' | 'terminal' | 'midnight' | 'sunset';
+type LyricsInteractionMode = 'seek' | 'dictionary';
 
 interface UIState {
   theme: Theme;
@@ -56,6 +58,9 @@ interface UIState {
   libraryAutoSyncEnabled: boolean;
   setLibraryAutoSyncEnabled: (value: boolean) => void;
 
+  lyricsInteractionMode: LyricsInteractionMode;
+  setLyricsInteractionMode: (mode: LyricsInteractionMode) => void;
+
   castConnected: boolean;
   setCastConnected: (connected: boolean) => void;
 
@@ -87,6 +92,14 @@ function loadBool(key: string, fallback: boolean): boolean {
     if (stored === 'false') return false;
   } catch { /* ignore */ }
   return fallback;
+}
+
+function loadLyricsInteractionMode(): LyricsInteractionMode {
+  try {
+    const stored = localStorage.getItem(LYRICS_INTERACTION_MODE_KEY);
+    if (stored === 'seek' || stored === 'dictionary') return stored;
+  } catch { /* ignore */ }
+  return 'seek';
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -190,6 +203,13 @@ export const useUIStore = create<UIState>((set) => ({
   setLibraryAutoSyncEnabled: (value) => {
     try { localStorage.setItem(LIBRARY_AUTO_SYNC_KEY, String(value)); } catch { /* ignore */ }
     set({ libraryAutoSyncEnabled: value });
+  },
+
+  lyricsInteractionMode: loadLyricsInteractionMode(),
+
+  setLyricsInteractionMode: (mode) => {
+    try { localStorage.setItem(LYRICS_INTERACTION_MODE_KEY, mode); } catch { /* ignore */ }
+    set({ lyricsInteractionMode: mode });
   },
 
   castConnected: false,

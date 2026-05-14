@@ -22,6 +22,7 @@
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.14.2",
     "tailwindcss": "^4.2.2",
+    "yomitan-core": "^1.4.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

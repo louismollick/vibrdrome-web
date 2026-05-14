@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "iconify-skill": {
+      "source": "bingal/iconify-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "ec07bdccce95dc52f6ac471c5838fba266b688e42a60a9c7cf8064f6a91bba98"
+    }
+  }
+}
