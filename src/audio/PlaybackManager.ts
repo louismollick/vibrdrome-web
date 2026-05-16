@@ -205,7 +205,8 @@ class PlaybackManager {
     this.cancelCrossfade();
     this.clearPreload();
 
-    const shouldSwapPlayersForBackgroundTrackChange = this.backgroundSafeMode && this.hasSource();
+    const shouldSwapPlayersForBackgroundTrackChange =
+      this.backgroundSafeMode && this.hasSource() && !this.shouldUseSingleElementTransport();
     const targetPlayer = shouldSwapPlayersForBackgroundTrackChange
       ? (this.activePlayer === 'A' ? 'B' : 'A')
       : this.activePlayer;
@@ -375,23 +376,6 @@ class PlaybackManager {
         audioContextState: this.audioContext.state,
       });
     }
-    if (this.shouldUseHiddenBackgroundResumeSwap()) {
-      try {
-        await this.resumeViaBackgroundSwap();
-        this.debugLog('resume:resolved', {
-          activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
-        });
-        this.setMediaSessionPlaybackState('playing');
-        this.updateMediaSessionPosition();
-        this.startPositionTracking();
-        return;
-      } catch (err) {
-        this.debugLog('resume:hidden-swap:rejected', {
-          error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
-          activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
-        });
-      }
-    }
     try {
       await this.getActiveAudio().play();
       this.debugLog('resume:resolved', {
@@ -418,12 +402,6 @@ class PlaybackManager {
     if (this.pendingStorePlaybackSync !== expectedCommand) return false;
     this.pendingStorePlaybackSync = null;
     return true;
-  }
-
-  private shouldUseHiddenBackgroundResumeSwap(): boolean {
-    if (!this.backgroundSafeMode || !this.hasSource() || !isStandalonePWA()) return false;
-    if (typeof document === 'undefined') return false;
-    return document.hidden;
   }
 
   async playRadio(streamUrl: string): Promise<void> {
@@ -706,168 +684,8 @@ class PlaybackManager {
     return player === 'A' ? this.playerA : this.playerB;
   }
 
-  private observeHiddenSwapAttempt(audio: HTMLAudioElement, player: 'A' | 'B'): () => void {
-    const eventTypes = ['loadedmetadata', 'canplay', 'playing', 'pause', 'error'] as const;
-    const removers = eventTypes.map((type) => {
-      const handler = () => {
-        this.debugLog(`resume:hidden-swap:event:${type}`, {
-          player,
-          audio: this.describeAudio(audio, player),
-        });
-      };
-      audio.addEventListener(type, handler);
-      return () => audio.removeEventListener(type, handler);
-    });
-
-    return () => {
-      removers.forEach((remove) => remove());
-    };
-  }
-
-  private queueHiddenSwapSeek(
-    audio: HTMLAudioElement,
-    player: 'A' | 'B',
-    resumeTime: number,
-  ): () => void {
-    if (!(resumeTime > 0) || !Number.isFinite(resumeTime)) return () => {};
-
-    let applied = false;
-    const expectedSrc = audio.currentSrc || audio.src;
-
-    const cleanup = () => {
-      audio.removeEventListener('loadedmetadata', attemptFromLoadedMetadata);
-      audio.removeEventListener('canplay', attemptFromCanPlay);
-      audio.removeEventListener('playing', attemptFromPlaying);
-    };
-
-    const attemptSeek = (trigger: 'immediate' | 'loadedmetadata' | 'canplay' | 'playing') => {
-      if (applied) return;
-      const currentSrc = audio.currentSrc || audio.src;
-      if (!currentSrc || currentSrc !== expectedSrc) {
-        cleanup();
-        return;
-      }
-      try {
-        audio.currentTime = resumeTime;
-        applied = true;
-        cleanup();
-        this.debugLog('resume:hidden-swap:seek-applied', {
-          player,
-          trigger,
-          resumeTime,
-          audio: this.describeAudio(audio, player),
-        });
-      } catch (err) {
-        this.debugLog('resume:hidden-swap:seek-pending', {
-          player,
-          trigger,
-          resumeTime,
-          error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
-          audio: this.describeAudio(audio, player),
-        });
-      }
-    };
-
-    const attemptFromLoadedMetadata = () => attemptSeek('loadedmetadata');
-    const attemptFromCanPlay = () => attemptSeek('canplay');
-    const attemptFromPlaying = () => attemptSeek('playing');
-
-    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA || Number.isFinite(audio.duration)) {
-      attemptSeek('immediate');
-      if (applied) return cleanup;
-    }
-
-    this.debugLog('resume:hidden-swap:seek-queued', {
-      player,
-      resumeTime,
-      audio: this.describeAudio(audio, player),
-    });
-    audio.addEventListener('loadedmetadata', attemptFromLoadedMetadata);
-    audio.addEventListener('canplay', attemptFromCanPlay);
-    audio.addEventListener('playing', attemptFromPlaying);
-    return cleanup;
-  }
-
-  private async resumeViaBackgroundSwap(): Promise<void> {
-    const previousPlayer = this.activePlayer;
-    const previousAudio = this.getActiveAudio();
-    const targetPlayer = previousPlayer === 'A' ? 'B' : 'A';
-    const targetAudio = this.getAudioForPlayer(targetPlayer);
-    const resumeSrc = previousAudio.currentSrc || previousAudio.src;
-    const resumeTime = Number.isFinite(previousAudio.currentTime) ? previousAudio.currentTime : 0;
-    const playbackRate = previousAudio.playbackRate || 1;
-
-    if (!resumeSrc || resumeSrc === window.location.href) {
-      throw new Error('No resumable audio source available for background swap');
-    }
-
-    this.debugLog('resume:hidden-swap:start', {
-      previousPlayer,
-      targetPlayer,
-      resumeTime,
-      previousAudio: this.describeAudio(previousAudio, previousPlayer),
-      targetAudio: this.describeAudio(targetAudio, targetPlayer),
-    });
-
-    const stopObserving = this.observeHiddenSwapAttempt(targetAudio, targetPlayer);
-
-    this.internalPause = true;
-    targetAudio.pause();
-    targetAudio.src = '';
-    targetAudio.load();
-    this.internalPause = false;
-
-    targetAudio.playbackRate = playbackRate;
-    targetAudio.src = resumeSrc;
-    targetAudio.load();
-    this.activePlayer = targetPlayer;
-    this.applyElementVolume();
-    const cleanupQueuedSeek = this.queueHiddenSwapSeek(targetAudio, targetPlayer, resumeTime);
-
-    this.debugLog('resume:hidden-swap:play-requested', {
-      previousPlayer,
-      targetPlayer,
-      targetAudio: this.describeAudio(targetAudio, targetPlayer),
-    });
-
-    try {
-      await targetAudio.play();
-      this.debugLog('resume:hidden-swap:play-resolved', {
-        previousPlayer,
-        targetPlayer,
-        targetAudio: this.describeAudio(targetAudio, targetPlayer),
-      });
-    } catch (err) {
-      this.activePlayer = previousPlayer;
-      this.internalPause = true;
-      targetAudio.pause();
-      targetAudio.src = '';
-      targetAudio.load();
-      this.internalPause = false;
-      cleanupQueuedSeek();
-      stopObserving();
-      throw err;
-    }
-
-    this.internalPause = true;
-    previousAudio.pause();
-    previousAudio.src = '';
-    previousAudio.load();
-    this.internalPause = false;
-
-    if (!Number.isNaN(targetAudio.duration)) {
-      usePlayerStore.getState().setDuration(Math.round(targetAudio.duration * 1000));
-    }
-    usePlayerStore.getState().setPosition(Math.round(targetAudio.currentTime * 1000));
-    this.applyElementVolume();
-    stopObserving();
-
-    this.debugLog('resume:hidden-swap:resolved', {
-      previousPlayer,
-      targetPlayer,
-      activeAudio: this.describeAudio(this.getActiveAudio(), this.activePlayer),
-      previousAudio: this.describeAudio(previousAudio, previousPlayer),
-    });
+  private shouldUseSingleElementTransport(): boolean {
+    return this.backgroundSafeMode && isStandalonePWA();
   }
 
   private setupAudioChain(): void {
@@ -1560,10 +1378,12 @@ class PlaybackManager {
     const standalone = isStandalonePWA();
     const visibilityState = typeof document !== 'undefined' ? document.visibilityState : undefined;
     const hidden = typeof document !== 'undefined' ? document.hidden : undefined;
+    const singleElementTransport = this.shouldUseSingleElementTransport();
 
     console.info(`[PlaybackManager][debug] ${event}`, {
       standalone,
       backgroundSafeMode: this.backgroundSafeMode,
+      singleElementTransport,
       activePlayer: this.activePlayer,
       storeIsPlaying: usePlayerStore.getState().isPlaying,
       currentSongId: usePlayerStore.getState().currentSong?.id ?? null,
