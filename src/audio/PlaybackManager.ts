@@ -685,6 +685,15 @@ class PlaybackManager {
   }
 
   private shouldUseSingleElementTransport(): boolean {
+    // Installed iOS PWAs can keep background playback alive, but resuming after
+    // an external pause (lock screen / headphones) remains unreliable in
+    // standalone mode. Keep the transport path as simple as possible there:
+    // one active element, no hidden swap handoffs.
+    //
+    // Related WebKit bugs:
+    // - 243258 Cannot resume MediaSession from PWA after pause
+    // - 243256 MediaSession controls disappear on resume after long pause
+    // - 261858 Standalone web app media session/autoplay regressions
     return this.backgroundSafeMode && isStandalonePWA();
   }
 
