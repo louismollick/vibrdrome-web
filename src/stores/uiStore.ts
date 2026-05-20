@@ -13,6 +13,7 @@ const REPLAYGAIN_MODE_KEY = 'vibrdrome_replaygain_mode';
 const QUEUE_SYNC_KEY = 'vibrdrome_queue_sync';
 const LIBRARY_AUTO_SYNC_KEY = 'vibrdrome_library_auto_sync';
 const LYRICS_INTERACTION_MODE_KEY = 'vibrdrome_lyrics_interaction_mode';
+const NAVIDROME_TAG_FILTERS_ENABLED_KEY = 'vibrdrome_navidrome_tag_filters_enabled';
 const DEFAULT_ACCENT = '#8b5cf6';
 
 type Theme = 'system' | 'dark' | 'light' | 'apple' | 'apple-dark' | 'retro' | 'terminal' | 'midnight' | 'sunset';
@@ -57,6 +58,9 @@ interface UIState {
 
   libraryAutoSyncEnabled: boolean;
   setLibraryAutoSyncEnabled: (value: boolean) => void;
+
+  navidromeTagFiltersEnabled: boolean;
+  setNavidromeTagFiltersEnabled: (value: boolean) => void;
 
   lyricsInteractionMode: LyricsInteractionMode;
   setLyricsInteractionMode: (mode: LyricsInteractionMode) => void;
@@ -203,6 +207,13 @@ export const useUIStore = create<UIState>((set) => ({
   setLibraryAutoSyncEnabled: (value) => {
     try { localStorage.setItem(LIBRARY_AUTO_SYNC_KEY, String(value)); } catch { /* ignore */ }
     set({ libraryAutoSyncEnabled: value });
+  },
+
+  navidromeTagFiltersEnabled: loadBool(NAVIDROME_TAG_FILTERS_ENABLED_KEY, false),
+
+  setNavidromeTagFiltersEnabled: (value) => {
+    try { localStorage.setItem(NAVIDROME_TAG_FILTERS_ENABLED_KEY, String(value)); } catch { /* ignore */ }
+    set({ navidromeTagFiltersEnabled: value });
   },
 
   lyricsInteractionMode: loadLyricsInteractionMode(),

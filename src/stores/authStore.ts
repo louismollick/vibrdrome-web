@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ServerConfig } from '../types/subsonic';
 import { getSubsonicClient } from '../api/SubsonicClient';
+import { clearNavidromeTokenCache, getNavidromeClient } from '../api/NavidromeClient';
 
 const SERVERS_KEY = 'vibrdrome_servers';
 const ACTIVE_SERVER_KEY = 'vibrdrome_active_server';
@@ -30,8 +31,8 @@ function loadInitialAuth() {
     const activeServer = servers.find((s) => s.id === activeServerId);
 
     if (activeServer) {
-      const client = getSubsonicClient();
-      client.setConfig(activeServer);
+      getSubsonicClient().setConfig(activeServer);
+      getNavidromeClient().setConfig(activeServer);
     }
 
     return { servers, activeServerId, isAuthenticated: !!activeServer };
@@ -61,6 +62,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     const updates: Partial<AuthState> = { servers };
     if (get().activeServerId === id) {
+      clearNavidromeTokenCache(id);
       updates.activeServerId = null;
       updates.isAuthenticated = false;
       localStorage.removeItem(ACTIVE_SERVER_KEY);
@@ -69,6 +71,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setActiveServer: (id) => {
+    if (get().activeServerId !== id) {
+      clearNavidromeTokenCache();
+    }
+
+    const server = get().servers.find((item) => item.id === id);
+    if (server) {
+      getSubsonicClient().setConfig(server);
+      getNavidromeClient().setConfig(server);
+    }
+
     localStorage.setItem(ACTIVE_SERVER_KEY, id);
     set({ activeServerId: id });
   },
@@ -76,9 +88,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   login: async (server) => {
     set({ isLoading: true, error: null });
     try {
-      const client = getSubsonicClient();
-      client.setConfig(server);
-      await client.ping();
+      getSubsonicClient().setConfig(server);
+      getNavidromeClient().setConfig(server);
+      await getSubsonicClient().ping();
 
       const { servers } = get();
       // Check by URL+username to prevent duplicates when re-logging
@@ -110,6 +122,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: () => {
     import('../utils/queueSync').then(({ cancelPendingSync }) => cancelPendingSync());
+    clearNavidromeTokenCache();
     localStorage.removeItem(ACTIVE_SERVER_KEY);
     set({ activeServerId: null, isAuthenticated: false, error: null });
   },
@@ -123,8 +136,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const isAuthenticated = !!activeServer;
 
       if (activeServer) {
-        const client = getSubsonicClient();
-        client.setConfig(activeServer);
+        getSubsonicClient().setConfig(activeServer);
+        getNavidromeClient().setConfig(activeServer);
       }
 
       set({ servers, activeServerId, isAuthenticated });
