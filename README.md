@@ -102,6 +102,18 @@
 - Import/export settings (back up EQ, theme, preferences as JSON)
 - Docker support for self-hosting
 
+### iOS PWA Note
+
+When installed to the iPhone home screen, iOS can keep background playback running, but resuming after an external pause
+(for example from lock-screen controls or Bluetooth headphones) is still unreliable in standalone PWA mode. Vibrdrome
+uses a simplified single-audio-element transport path in installed iOS PWAs to avoid making that platform bug worse, but
+it cannot fully work around WebKit here.
+
+Relevant WebKit reports:
+- [243258: Cannot resume MediaSession from PWA after pause](https://bugs.webkit.org/show_bug.cgi?id=243258)
+- [243256: MediaSession controls disappear on resume after long pause](https://bugs.webkit.org/show_bug.cgi?id=243256)
+- [261858: Standalone web app media session/autoplay regressions](https://bugs.webkit.org/show_bug.cgi?id=261858)
+
 ---
 
 ## (ﾉ◕ヮ◕)ﾉ Getting Started

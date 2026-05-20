@@ -5,6 +5,12 @@ All notable changes to Vibrdrome Web are documented here.
 ## [ Unreleased ]
 - Document Picture-in-Picture support (Chrome native PiP window)
 
+### Changed
+- Simplified installed iOS PWA audio transport to a single active media element; removed the failed hidden background resume swap workaround for homescreen mode
+
+### Documented
+- Added a README note for the iOS homescreen background-resume limitation with links to the relevant WebKit bug reports
+
 ## [1.8.1-beta.2] - 2026-05-05
 
 ### Fixed
