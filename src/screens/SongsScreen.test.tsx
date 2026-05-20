@@ -151,6 +151,34 @@ describe('SongsScreen', () => {
     expect(subsonicMocks.getRandomSongs).not.toHaveBeenCalled();
   });
 
+  it('normalizes native duration and falls back cover art to the song id', async () => {
+    useUIStore.setState({ navidromeTagFiltersEnabled: true });
+    const playSongsMock = vi.fn();
+    usePlayerStore.setState({ playSongs: playSongsMock });
+    navidromeMocks.getSongsPage.mockResolvedValueOnce([
+      {
+        id: 'nav-1',
+        title: 'Native Song',
+        artist: 'Artist',
+        duration: 250.620000000000005,
+        tags: {},
+        lyrics: '',
+      },
+    ]);
+
+    renderScreen();
+
+    fireEvent.click(await screen.findByText('Native Song'));
+
+    expect(playSongsMock).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'nav-1',
+        coverArt: 'nav-1',
+        duration: 250,
+      }),
+    ], 0);
+  });
+
   it('falls back to standard songs and shows a notice when native auth fails', async () => {
     useUIStore.setState({ navidromeTagFiltersEnabled: true });
     navidromeMocks.login.mockRejectedValueOnce(new Error('bad auth'));

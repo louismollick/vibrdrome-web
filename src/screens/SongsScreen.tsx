@@ -28,6 +28,10 @@ type SongsSourceMode = 'standard' | 'native' | 'bootstrapping-native';
 type LyricsFilter = 'all' | 'synced' | 'unsynced' | 'none';
 
 function adaptNavidromeSong(song: NavidromeMediaFile): SongsPageSong {
+  const duration = typeof song.duration === 'number' && Number.isFinite(song.duration)
+    ? Math.floor(song.duration)
+    : undefined;
+
   return {
     id: String(song.id),
     parent: song.parent !== undefined ? String(song.parent) : undefined,
@@ -39,11 +43,11 @@ function adaptNavidromeSong(song: NavidromeMediaFile): SongsPageSong {
     track: song.track ?? song.trackNumber,
     year: song.year,
     genre: song.genre,
-    coverArt: song.coverArt,
+    coverArt: song.coverArt ?? String(song.id),
     size: song.size,
     contentType: song.contentType,
     suffix: song.suffix,
-    duration: song.duration,
+    duration,
     bitRate: song.bitRate,
     path: song.path,
     discNumber: song.discNumber,
