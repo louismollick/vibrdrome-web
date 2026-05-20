@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { useUIStore } from '../stores/uiStore';
@@ -12,19 +12,26 @@ import { Header } from '../components/common';
 import ThemePicker from '../components/settings/ThemePicker';
 import YomitanSettings from '../components/settings/YomitanSettings';
 import { useDownloadStore } from '../stores/downloadStore';
+import { getNavidromeClient } from '../api/NavidromeClient';
 
 export default function SettingsScreen() {
   const navigate = useNavigate();
   const { servers, activeServerId, logout } = useAuthStore();
   const { accentColor, setAccentColor, lastfmApiKey, setLastfmApiKey, reduceMotion, setReduceMotion, keyboardShortcutsEnabled, setKeyboardShortcutsEnabled, streamQuality, setStreamQuality } = useUIStore();
   const { crossfadeEnabled, crossfadeDuration, setCrossfade, setCrossfadeDuration, gaplessEnabled, setGapless } = usePlayerStore();
-  const { sleepFadeDuration, setSleepFadeDuration, notificationsEnabled, setNotificationsEnabled, replayGainMode, setReplayGainMode, queueSyncEnabled, setQueueSyncEnabled, libraryAutoSyncEnabled, setLibraryAutoSyncEnabled } = useUIStore();
+  const { sleepFadeDuration, setSleepFadeDuration, notificationsEnabled, setNotificationsEnabled, replayGainMode, setReplayGainMode, queueSyncEnabled, setQueueSyncEnabled, libraryAutoSyncEnabled, setLibraryAutoSyncEnabled, navidromeTagFiltersEnabled, setNavidromeTagFiltersEnabled } = useUIStore();
   const { isLibrarySyncing, lastLibrarySyncAt, librarySyncError } = useDownloadStore();
   const eqEnabled = useEQStore((s) => s.enabled);
   const isOnline = useOnlineStatus();
   const serverManagerOfflineMessage = getOfflineMessage('serverManager');
 
   const activeServer = servers.find((s) => s.id === activeServerId);
+  const navidromeAvailabilityStatus = useMemo(() => {
+    if (!activeServer) return 'unknown';
+    const client = getNavidromeClient();
+    client.setConfig(activeServer);
+    return client.getAvailabilityStatus();
+  }, [activeServer]);
 
   const handleClearCache = () => {
     const keysToRemove: string[] = [];
@@ -64,6 +71,36 @@ export default function SettingsScreen() {
               ) : (
                 <p className="text-sm text-text-muted">No active server</p>
               )}
+              <div className="border-t border-border pt-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-sm text-text-primary">Enable Navidrome tag filters</span>
+                    <p className="text-xs text-text-muted">
+                      Uses Navidrome native API for Songs filters and custom tags. Only applies when supported by the active server.
+                    </p>
+                    {navidromeTagFiltersEnabled && navidromeAvailabilityStatus === 'available' && (
+                      <p className="mt-1 text-[10px] text-accent">Active</p>
+                    )}
+                    {navidromeTagFiltersEnabled && navidromeAvailabilityStatus === 'unavailable' && (
+                      <p className="mt-1 text-[10px] text-text-muted">Unavailable for current server</p>
+                    )}
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={navidromeTagFiltersEnabled}
+                    onClick={() => setNavidromeTagFiltersEnabled(!navidromeTagFiltersEnabled)}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                      navidromeTagFiltersEnabled ? 'bg-accent' : 'bg-bg-tertiary'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                        navidromeTagFiltersEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={() => navigate('/settings/servers')}
