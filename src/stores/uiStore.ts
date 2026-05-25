@@ -13,6 +13,7 @@ const REPLAYGAIN_MODE_KEY = 'vibrdrome_replaygain_mode';
 const QUEUE_SYNC_KEY = 'vibrdrome_queue_sync';
 const LIBRARY_AUTO_SYNC_KEY = 'vibrdrome_library_auto_sync';
 const LYRICS_INTERACTION_MODE_KEY = 'vibrdrome_lyrics_interaction_mode';
+const AUTOPLAY_QUEUE_KEY = 'vibrdrome_autoplay_queue';
 const DEFAULT_ACCENT = '#8b5cf6';
 
 type Theme = 'system' | 'dark' | 'light' | 'apple' | 'apple-dark' | 'retro' | 'terminal' | 'midnight' | 'sunset';
@@ -54,6 +55,9 @@ interface UIState {
 
   queueSyncEnabled: boolean;
   setQueueSyncEnabled: (value: boolean) => void;
+
+  autoplayQueueEnabled: boolean;
+  setAutoplayQueueEnabled: (value: boolean) => void;
 
   libraryAutoSyncEnabled: boolean;
   setLibraryAutoSyncEnabled: (value: boolean) => void;
@@ -196,6 +200,13 @@ export const useUIStore = create<UIState>((set) => ({
   setQueueSyncEnabled: (value) => {
     try { localStorage.setItem(QUEUE_SYNC_KEY, String(value)); } catch { /* ignore */ }
     set({ queueSyncEnabled: value });
+  },
+
+  autoplayQueueEnabled: loadBool(AUTOPLAY_QUEUE_KEY, true),
+
+  setAutoplayQueueEnabled: (value) => {
+    try { localStorage.setItem(AUTOPLAY_QUEUE_KEY, String(value)); } catch { /* ignore */ }
+    set({ autoplayQueueEnabled: value });
   },
 
   libraryAutoSyncEnabled: loadBool(LIBRARY_AUTO_SYNC_KEY, false),

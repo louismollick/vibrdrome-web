@@ -1,9 +1,46 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { useUIStore } from './uiStore';
+import { useMusicFolderStore } from './musicFolderStore';
 import { usePlayerStore } from './playerStore';
 import type { Song } from '../types/subsonic';
 
+const prepareAutoplayTailMock = vi.fn();
+
+vi.mock('../utils/queueAutoplay', () => ({
+  prepareAutoplayTail: (...args: Parameters<typeof prepareAutoplayTailMock>) => prepareAutoplayTailMock(...args),
+}));
+
 // Reset store between tests
 beforeEach(() => {
+  prepareAutoplayTailMock.mockReset();
+  prepareAutoplayTailMock.mockResolvedValue({ songs: [], status: 'empty' });
+  localStorage.clear();
+  useUIStore.setState({
+    theme: 'system',
+    accentColor: '#8b5cf6',
+    reduceMotion: false,
+    keyboardShortcutsEnabled: true,
+    streamQuality: 0,
+    epilepsyWarningDismissed: false,
+    lastfmApiKey: '',
+    popOutPlayerOpen: false,
+    notificationsEnabled: false,
+    sleepFadeDuration: 10,
+    replayGainMode: 'track',
+    queueSyncEnabled: false,
+    autoplayQueueEnabled: true,
+    libraryAutoSyncEnabled: false,
+    lyricsInteractionMode: 'seek',
+    castConnected: false,
+    shortcutsOverlayOpen: false,
+    commandPaletteOpen: false,
+    sleepTimer: { endTime: null, duration: null },
+  });
+  useMusicFolderStore.setState({
+    folders: [],
+    activeFolderId: null,
+    loaded: false,
+  });
   usePlayerStore.setState({
     queue: [],
     currentIndex: -1,
@@ -19,6 +56,11 @@ beforeEach(() => {
     playbackSpeed: 1.0,
     crossfadeEnabled: false,
     crossfadeDuration: 5,
+    gaplessEnabled: true,
+    autoplayBaseLength: null,
+    autoplaySeedSongId: null,
+    autoplayStatus: 'idle',
+    autoplayRequestKey: null,
   });
 });
 
@@ -29,6 +71,16 @@ const makeSong = (id: string, title = `Song ${id}`): Song => ({
   album: 'Test Album',
   duration: 180,
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 describe('playerStore', () => {
   describe('playSongs', () => {
@@ -57,6 +109,37 @@ describe('playerStore', () => {
 
       expect(usePlayerStore.getState().radioMode).toBeNull();
       expect(usePlayerStore.getState().radioPlaying).toBe(false);
+    });
+
+    it('seeds autoplay metadata', () => {
+      const pending = deferred<{ songs: Song[]; status: 'ready' | 'fallback' | 'empty' | 'stale' }>();
+      prepareAutoplayTailMock.mockReturnValueOnce(pending.promise);
+      const songs = [makeSong('1'), makeSong('2'), makeSong('3')];
+
+      usePlayerStore.getState().playSongs(songs, 1);
+
+      const state = usePlayerStore.getState();
+      expect(state.autoplayBaseLength).toBe(3);
+      expect(state.autoplaySeedSongId).toBe('2');
+      expect(state.autoplayStatus).toBe('loading');
+      expect(state.autoplayRequestKey).toBeTruthy();
+      expect(prepareAutoplayTailMock).toHaveBeenCalledWith(expect.objectContaining({
+        seedSong: songs[1],
+        explicitQueue: songs,
+        activeFolderId: undefined,
+        isStale: expect.any(Function),
+      }));
+      pending.resolve({ songs: [], status: 'empty' });
+    });
+
+    it('autoplay disabled prevents generation', () => {
+      useUIStore.getState().setAutoplayQueueEnabled(false);
+
+      usePlayerStore.getState().playSongs([makeSong('1'), makeSong('2')], 0);
+
+      expect(prepareAutoplayTailMock).not.toHaveBeenCalled();
+      expect(usePlayerStore.getState().autoplayBaseLength).toBeNull();
+      expect(usePlayerStore.getState().autoplayStatus).toBe('idle');
     });
   });
 
@@ -113,28 +196,38 @@ describe('playerStore', () => {
   describe('queue manipulation', () => {
     it('playNext inserts at correct position', () => {
       usePlayerStore.getState().playSongs([makeSong('1'), makeSong('2')], 0);
+      usePlayerStore.setState({ autoplayBaseLength: 2, autoplaySeedSongId: '1', autoplayStatus: 'ready', autoplayRequestKey: 'req' });
       usePlayerStore.getState().playNext(makeSong('inserted'));
 
-      const queue = usePlayerStore.getState().queue;
+      const state = usePlayerStore.getState();
+      const queue = state.queue;
       expect(queue[1].id).toBe('inserted');
       expect(queue).toHaveLength(3);
+      expect(state.autoplayBaseLength).toBeNull();
+      expect(state.autoplayStatus).toBe('idle');
     });
 
     it('addToQueue appends to end', () => {
       usePlayerStore.getState().playSongs([makeSong('1')], 0);
+      usePlayerStore.setState({ autoplayBaseLength: 1, autoplaySeedSongId: '1', autoplayStatus: 'ready', autoplayRequestKey: 'req' });
       usePlayerStore.getState().addToQueue(makeSong('appended'));
 
-      const queue = usePlayerStore.getState().queue;
+      const state = usePlayerStore.getState();
+      const queue = state.queue;
       expect(queue[queue.length - 1].id).toBe('appended');
+      expect(state.autoplayBaseLength).toBeNull();
     });
 
     it('removeFromQueue removes correct song', () => {
       usePlayerStore.getState().playSongs([makeSong('1'), makeSong('2'), makeSong('3')], 0);
+      usePlayerStore.setState({ autoplayBaseLength: 3, autoplaySeedSongId: '1', autoplayStatus: 'ready', autoplayRequestKey: 'req' });
       usePlayerStore.getState().removeFromQueue(1);
 
-      const queue = usePlayerStore.getState().queue;
+      const state = usePlayerStore.getState();
+      const queue = state.queue;
       expect(queue).toHaveLength(2);
       expect(queue.map((s) => s.id)).toEqual(['1', '3']);
+      expect(state.autoplayBaseLength).toBeNull();
     });
 
     it('removeFromQueue adjusts currentIndex when removing before current', () => {
@@ -147,12 +240,15 @@ describe('playerStore', () => {
 
     it('clearQueue resets everything', () => {
       usePlayerStore.getState().playSongs([makeSong('1'), makeSong('2')], 0);
+      usePlayerStore.setState({ autoplayBaseLength: 2, autoplaySeedSongId: '1', autoplayStatus: 'ready', autoplayRequestKey: 'req' });
       usePlayerStore.getState().clearQueue();
 
       const state = usePlayerStore.getState();
       expect(state.queue).toHaveLength(0);
       expect(state.currentSong).toBeNull();
       expect(state.isPlaying).toBe(false);
+      expect(state.autoplayBaseLength).toBeNull();
+      expect(state.autoplayStatus).toBe('idle');
     });
   });
 
