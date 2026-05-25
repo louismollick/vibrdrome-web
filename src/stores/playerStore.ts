@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { getSubsonicClient } from '../api/SubsonicClient';
 import { getPlaybackManager } from '../audio/PlaybackManager';
+import { useUIStore } from './uiStore';
+import { useMusicFolderStore } from './musicFolderStore';
+import { prepareAutoplayTail } from '../utils/queueAutoplay';
 import type { Song } from '../types/subsonic';
 
 const QUEUE_KEY = 'vibrdrome_queue';
@@ -31,6 +34,12 @@ export interface RadioState {
   coverArt?: string;
 }
 
+type AutoplayStatus = 'idle' | 'loading' | 'ready' | 'fallback' | 'empty';
+
+interface PlaySongsOptions {
+  disableAutoplay?: boolean;
+}
+
 interface PlaybackState {
   queue: Song[];
   currentIndex: number;
@@ -47,8 +56,12 @@ interface PlaybackState {
   crossfadeEnabled: boolean;
   crossfadeDuration: number;
   gaplessEnabled: boolean;
+  autoplayBaseLength: number | null;
+  autoplaySeedSongId: string | null;
+  autoplayStatus: AutoplayStatus;
+  autoplayRequestKey: string | null;
 
-  playSongs: (songs: Song[], startIndex?: number) => void;
+  playSongs: (songs: Song[], startIndex?: number, options?: PlaySongsOptions) => void;
   playNext: (song: Song) => void;
   addToQueue: (song: Song) => void;
   removeFromQueue: (index: number) => void;
@@ -74,12 +87,21 @@ interface PlaybackState {
   stopRadio: () => void;
 }
 
+const DEFAULT_AUTOPLAY_STATE = {
+  autoplayBaseLength: null,
+  autoplaySeedSongId: null,
+  autoplayStatus: 'idle' as const,
+  autoplayRequestKey: null,
+};
+
 function persistQueue(state: PlaybackState) {
   try {
     localStorage.setItem(QUEUE_KEY, JSON.stringify({
       queue: state.queue,
       currentIndex: state.currentIndex,
       positionMs: state.positionMs,
+      autoplayBaseLength: state.autoplayBaseLength,
+      autoplaySeedSongId: state.autoplaySeedSongId,
     }));
   } catch { /* storage full or unavailable */ }
 
@@ -114,12 +136,19 @@ function loadPersistedState(): Partial<PlaybackState> {
     const currentSong = currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
 
     const positionMs: number = queueData.positionMs ?? 0;
+    const autoplayBaseLength = typeof queueData.autoplayBaseLength === 'number' ? queueData.autoplayBaseLength : null;
+    const autoplaySeedSongId = typeof queueData.autoplaySeedSongId === 'string' ? queueData.autoplaySeedSongId : null;
+    const autoplayStatus: AutoplayStatus = autoplayBaseLength !== null && autoplayBaseLength < queue.length ? 'ready' : 'idle';
 
     return {
       queue,
       currentIndex,
       currentSong,
       positionMs,
+      autoplayBaseLength,
+      autoplaySeedSongId,
+      autoplayStatus,
+      autoplayRequestKey: null,
       repeatMode: settingsData.repeatMode ?? 'off',
       shuffleEnabled: settingsData.shuffleEnabled ?? false,
       playbackSpeed: settingsData.playbackSpeed ?? 1.0,
@@ -150,26 +179,99 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
   crossfadeEnabled: persisted.crossfadeEnabled ?? false,
   crossfadeDuration: persisted.crossfadeDuration ?? 5,
   gaplessEnabled: persisted.gaplessEnabled ?? true,
+  autoplayBaseLength: persisted.autoplayBaseLength ?? null,
+  autoplaySeedSongId: persisted.autoplaySeedSongId ?? null,
+  autoplayStatus: persisted.autoplayStatus ?? 'idle',
+  autoplayRequestKey: null,
 
-  playSongs: (songs, startIndex = 0) => {
+  playSongs: (songs, startIndex = 0, options) => {
     // Stop radio if playing
     if (get().radioMode) {
       getPlaybackManager().stopRadio();
     }
+    const seedSong = songs[startIndex] ?? null;
+    const autoplayEnabled = useUIStore.getState().autoplayQueueEnabled;
+    const shouldPrepareAutoplay = (
+      !options?.disableAutoplay
+      && autoplayEnabled
+      && navigator.onLine
+      && songs.length > 0
+      && seedSong !== null
+    );
+    const autoplayRequestKey = shouldPrepareAutoplay
+      ? `${seedSong.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`
+      : null;
     const state: Partial<PlaybackState> = {
       queue: songs,
       currentIndex: startIndex,
-      currentSong: songs[startIndex] ?? null,
+      currentSong: seedSong,
       isPlaying: true,
       radioMode: null,
       radioPlaying: false,
       positionMs: 0,
+      ...(shouldPrepareAutoplay
+        ? {
+            autoplayBaseLength: songs.length,
+            autoplaySeedSongId: seedSong.id,
+            autoplayStatus: 'loading' as const,
+            autoplayRequestKey,
+          }
+        : DEFAULT_AUTOPLAY_STATE),
     };
     if (get().shuffleEnabled) {
       state.shuffleOrder = shuffleArray(songs.length, startIndex);
     }
     set(state);
     persistQueue(get());
+
+    if (!shouldPrepareAutoplay || !autoplayRequestKey || !seedSong) return;
+
+    void prepareAutoplayTail({
+      seedSong,
+      explicitQueue: songs,
+      activeFolderId: useMusicFolderStore.getState().activeFolderId ?? undefined,
+      isStale: () => get().autoplayRequestKey !== autoplayRequestKey,
+    }).then((result) => {
+      const currentState = get();
+      if (currentState.autoplayRequestKey !== autoplayRequestKey) return;
+      if (result.status === 'stale') return;
+
+      if (result.status === 'empty') {
+        set({
+          autoplayStatus: 'empty',
+          autoplayRequestKey: null,
+        });
+        persistQueue(get());
+        return;
+      }
+
+      if ((currentState.autoplayBaseLength ?? 0) < currentState.queue.length) {
+        return;
+      }
+
+      const appendedQueue = [...currentState.queue, ...result.songs];
+      const appendedShuffleOrder = currentState.shuffleEnabled
+        ? [
+            ...currentState.shuffleOrder,
+            ...result.songs.map((_, index) => currentState.queue.length + index),
+          ]
+        : [];
+
+      set({
+        queue: appendedQueue,
+        shuffleOrder: appendedShuffleOrder,
+        autoplayStatus: result.status,
+        autoplayRequestKey: null,
+      });
+      persistQueue(get());
+    }).catch(() => {
+      if (get().autoplayRequestKey !== autoplayRequestKey) return;
+      set({
+        autoplayStatus: 'empty',
+        autoplayRequestKey: null,
+      });
+      persistQueue(get());
+    });
   },
 
   playNext: (song) => {
@@ -180,7 +282,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
     const newShuffleOrder = shuffleEnabled
       ? [...shuffleOrder.map((i) => (i >= insertAt ? i + 1 : i)), insertAt]
       : [];
-    set({ queue: newQueue, shuffleOrder: newShuffleOrder });
+    set({ queue: newQueue, shuffleOrder: newShuffleOrder, ...DEFAULT_AUTOPLAY_STATE });
     persistQueue(get());
   },
 
@@ -189,7 +291,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
     const newQueue = [...queue, song];
     const newIndex = newQueue.length - 1;
     const newShuffleOrder = shuffleEnabled ? [...shuffleOrder, newIndex] : [];
-    set({ queue: newQueue, shuffleOrder: newShuffleOrder });
+    set({ queue: newQueue, shuffleOrder: newShuffleOrder, ...DEFAULT_AUTOPLAY_STATE });
     persistQueue(get());
   },
 
@@ -216,6 +318,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
       currentSong: newIndex >= 0 && newIndex < newQueue.length ? newQueue[newIndex] : null,
       isPlaying: newQueue.length > 0 ? get().isPlaying : false,
       shuffleOrder: newShuffleOrder,
+      ...DEFAULT_AUTOPLAY_STATE,
     });
     persistQueue(get());
   },
@@ -229,6 +332,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
       positionMs: 0,
       durationMs: 0,
       shuffleOrder: [],
+      ...DEFAULT_AUTOPLAY_STATE,
     });
     persistQueue(get());
   },
@@ -450,6 +554,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
       currentIndex: newCurrentIndex,
       currentSong: newQueue[newCurrentIndex] ?? null,
       shuffleOrder: newShuffleOrder,
+      ...DEFAULT_AUTOPLAY_STATE,
     });
     persistQueue(get());
   },
@@ -459,6 +564,7 @@ export const usePlayerStore = create<PlaybackState>((set, get) => ({
       radioMode: station,
       radioPlaying: true,
       isPlaying: false,
+      ...DEFAULT_AUTOPLAY_STATE,
     });
   },
 

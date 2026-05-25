@@ -53,7 +53,7 @@ export async function loadServerQueue(): Promise<void> {
       const pq = await client.getPlayQueueByIndex();
       if (pq.entry && pq.entry.length > 0) {
         const index = pq.currentIndex ?? 0;
-        usePlayerStore.getState().playSongs(pq.entry, index);
+        usePlayerStore.getState().playSongs(pq.entry, index, { disableAutoplay: true });
         usePlayerStore.setState({ isPlaying: false });
         if (pq.position) {
           usePlayerStore.getState().setPosition(pq.position);
@@ -65,7 +65,7 @@ export async function loadServerQueue(): Promise<void> {
         const index = pq.current
           ? pq.entry.findIndex((s) => s.id === pq.current)
           : 0;
-        usePlayerStore.getState().playSongs(pq.entry, Math.max(0, index));
+        usePlayerStore.getState().playSongs(pq.entry, Math.max(0, index), { disableAutoplay: true });
         usePlayerStore.setState({ isPlaying: false });
         if (pq.position) {
           usePlayerStore.getState().setPosition(pq.position);

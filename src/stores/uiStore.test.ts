@@ -14,6 +14,7 @@ beforeEach(() => {
     commandPaletteOpen: false,
     popOutPlayerOpen: false,
     queueSyncEnabled: false,
+    autoplayQueueEnabled: true,
     libraryAutoSyncEnabled: false,
     navidromeTagFiltersEnabled: false,
     lyricsInteractionMode: 'seek',
@@ -134,6 +135,23 @@ describe('uiStore', () => {
     it('can be enabled', () => {
       useUIStore.getState().setLibraryAutoSyncEnabled(true);
       expect(useUIStore.getState().libraryAutoSyncEnabled).toBe(true);
+    });
+  });
+
+  describe('autoplayQueue', () => {
+    it('defaults to enabled', () => {
+      expect(useUIStore.getState().autoplayQueueEnabled).toBe(true);
+    });
+
+    it('persists toggle state', async () => {
+      useUIStore.getState().setAutoplayQueueEnabled(false);
+
+      expect(useUIStore.getState().autoplayQueueEnabled).toBe(false);
+      expect(localStorage.getItem('vibrdrome_autoplay_queue')).toBe('false');
+
+      vi.resetModules();
+      const { useUIStore: reloadedStore } = await import('./uiStore');
+      expect(reloadedStore.getState().autoplayQueueEnabled).toBe(false);
     });
   });
 

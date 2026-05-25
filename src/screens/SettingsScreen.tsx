@@ -19,7 +19,22 @@ export default function SettingsScreen() {
   const { servers, activeServerId, logout } = useAuthStore();
   const { accentColor, setAccentColor, lastfmApiKey, setLastfmApiKey, reduceMotion, setReduceMotion, keyboardShortcutsEnabled, setKeyboardShortcutsEnabled, streamQuality, setStreamQuality } = useUIStore();
   const { crossfadeEnabled, crossfadeDuration, setCrossfade, setCrossfadeDuration, gaplessEnabled, setGapless } = usePlayerStore();
-  const { sleepFadeDuration, setSleepFadeDuration, notificationsEnabled, setNotificationsEnabled, replayGainMode, setReplayGainMode, queueSyncEnabled, setQueueSyncEnabled, libraryAutoSyncEnabled, setLibraryAutoSyncEnabled, navidromeTagFiltersEnabled, setNavidromeTagFiltersEnabled } = useUIStore();
+  const {
+    sleepFadeDuration,
+    setSleepFadeDuration,
+    notificationsEnabled,
+    setNotificationsEnabled,
+    replayGainMode,
+    setReplayGainMode,
+    queueSyncEnabled,
+    setQueueSyncEnabled,
+    autoplayQueueEnabled,
+    setAutoplayQueueEnabled,
+    libraryAutoSyncEnabled,
+    setLibraryAutoSyncEnabled,
+    navidromeTagFiltersEnabled,
+    setNavidromeTagFiltersEnabled,
+  } = useUIStore();
   const { isLibrarySyncing, lastLibrarySyncAt, librarySyncError } = useDownloadStore();
   const eqEnabled = useEQStore((s) => s.enabled);
   const isOnline = useOnlineStatus();
@@ -212,6 +227,29 @@ export default function SettingsScreen() {
                     <option value={128}>Low (128 kbps)</option>
                     <option value={96}>Very Low (96 kbps)</option>
                   </select>
+                </div>
+              </div>
+
+              <div className="border-t border-border pt-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm text-text-primary">Autoplay Queue</span>
+                    <p className="text-xs text-text-muted">Continue with similar songs after your queue ends</p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={autoplayQueueEnabled}
+                    onClick={() => setAutoplayQueueEnabled(!autoplayQueueEnabled)}
+                    className={`relative h-6 w-11 rounded-full transition-colors ${
+                      autoplayQueueEnabled ? 'bg-accent' : 'bg-bg-tertiary'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                        autoplayQueueEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
                 </div>
               </div>
 
