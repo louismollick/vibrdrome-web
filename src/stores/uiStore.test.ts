@@ -16,6 +16,7 @@ beforeEach(() => {
     queueSyncEnabled: false,
     autoplayQueueEnabled: true,
     libraryAutoSyncEnabled: false,
+    navidromeTagFiltersEnabled: false,
     lyricsInteractionMode: 'seek',
   });
 });
@@ -151,6 +152,19 @@ describe('uiStore', () => {
       vi.resetModules();
       const { useUIStore: reloadedStore } = await import('./uiStore');
       expect(reloadedStore.getState().autoplayQueueEnabled).toBe(false);
+    });
+  });
+
+  describe('navidromeTagFiltersEnabled', () => {
+    it('defaults to disabled', () => {
+      expect(useUIStore.getState().navidromeTagFiltersEnabled).toBe(false);
+    });
+
+    it('persists updates to localStorage', () => {
+      useUIStore.getState().setNavidromeTagFiltersEnabled(true);
+
+      expect(useUIStore.getState().navidromeTagFiltersEnabled).toBe(true);
+      expect(localStorage.getItem('vibrdrome_navidrome_tag_filters_enabled')).toBe('true');
     });
   });
 

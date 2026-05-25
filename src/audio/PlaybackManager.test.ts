@@ -279,7 +279,64 @@ describe('PlaybackManager cast integration', () => {
     }
   });
 
-  it('swaps to the inactive player when resuming hidden standalone iOS playback', async () => {
+  it('keeps track changes on the active player for standalone iOS playback', async () => {
+    const userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
+    const platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
+    const touchDescriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints');
+    const standaloneDescriptor = Object.getOwnPropertyDescriptor(navigator, 'standalone');
+
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+    });
+    Object.defineProperty(navigator, 'platform', {
+      configurable: true,
+      value: 'iPhone',
+    });
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      configurable: true,
+      value: 5,
+    });
+    Object.defineProperty(navigator, 'standalone', {
+      configurable: true,
+      value: true,
+    });
+
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+
+    try {
+      const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
+      pm.playerA.src = 'https://example.test/stream/original';
+      pm.activePlayer = 'A';
+
+      await pm.play({
+        id: 'song-3',
+        title: 'Standalone Track',
+        artist: 'Artist',
+        album: 'Album',
+      });
+
+      expect(pm.activePlayer).toBe('A');
+      expect(pm.playerA.src).toContain('/stream/song-3');
+      expect(pm.playerB.src).toBe('');
+      expect(playSpy).toHaveBeenCalled();
+      expect(pauseSpy).toHaveBeenCalled();
+      expect(loadSpy).toHaveBeenCalled();
+    } finally {
+      playSpy.mockRestore();
+      pauseSpy.mockRestore();
+      loadSpy.mockRestore();
+      if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
+      if (platformDescriptor) Object.defineProperty(navigator, 'platform', platformDescriptor);
+      if (touchDescriptor) Object.defineProperty(navigator, 'maxTouchPoints', touchDescriptor);
+      if (standaloneDescriptor) Object.defineProperty(navigator, 'standalone', standaloneDescriptor);
+      else delete (navigator as Navigator & { standalone?: boolean }).standalone;
+    }
+  });
+
+  it('resumes the active player directly for hidden standalone iOS 18 playback', async () => {
     const userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
     const platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
     const touchDescriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints');
@@ -314,11 +371,7 @@ describe('PlaybackManager cast integration', () => {
 
     const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
     const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
-    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function (this: HTMLMediaElement) {
-      queueMicrotask(() => {
-        this.dispatchEvent(new Event('loadedmetadata'));
-      });
-    });
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
 
     try {
       const pm = new PlaybackManager() as unknown as PlaybackManagerTestAccess;
@@ -329,14 +382,12 @@ describe('PlaybackManager cast integration', () => {
 
       await (pm as unknown as { resume: () => Promise<void> }).resume();
 
-      expect(pm.activePlayer).toBe('B');
-      expect(pm.playerB.src).toContain('/stream/original');
-      expect(pm.playerB.currentTime).toBe(42.25);
-      expect(pm.playerB.playbackRate).toBe(1.25);
-      expect(pm.playerA.src).toBe(window.location.href);
-      expect(playSpy).toHaveBeenCalled();
-      expect(pauseSpy).toHaveBeenCalled();
-      expect(loadSpy).toHaveBeenCalled();
+      expect(pm.activePlayer).toBe('A');
+      expect(pm.playerA.src).toContain('/stream/original');
+      expect(pm.playerB.src).toBe('');
+      expect(playSpy).toHaveBeenCalledTimes(1);
+      expect(pauseSpy).not.toHaveBeenCalled();
+      expect(loadSpy).not.toHaveBeenCalled();
     } finally {
       playSpy.mockRestore();
       pauseSpy.mockRestore();
