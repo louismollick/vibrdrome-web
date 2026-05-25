@@ -45,16 +45,18 @@ function getCurrentLineIndex(lines: LyricLine[], positionMs: number): number {
   return currentIdx;
 }
 
+const lyricTextSizeClass = 'text-2xl md:text-4xl lg:text-5xl';
+
 function getSyncedLineClass(index: number, currentIdx: number) {
   if (index === currentIdx) {
-    return 'origin-left scale-105 text-xl font-bold text-accent';
+    return `origin-left scale-105 ${lyricTextSizeClass} font-bold text-accent`;
   }
 
   if (index < currentIdx) {
-    return 'text-lg font-medium text-text-muted';
+    return `${lyricTextSizeClass} font-medium text-text-muted`;
   }
 
-  return 'text-lg font-medium text-text-secondary';
+  return `${lyricTextSizeClass} font-medium text-text-secondary`;
 }
 
 function renderPlainLine(line: LyricLine) {
@@ -379,7 +381,7 @@ export default function LyricsScreen() {
             ref={isCurrent ? setCurrentLineElement : undefined}
             data-line-idx={index}
             className={`w-full whitespace-pre-wrap text-left ${
-              synced ? getSyncedLineClass(index, currentLineIndex) : 'text-base text-text-primary'
+              synced ? getSyncedLineClass(index, currentLineIndex) : `${lyricTextSizeClass} text-text-primary`
             }`}
           >
             {renderedTokens ?? renderPlainLine(line)}
@@ -449,7 +451,7 @@ export default function LyricsScreen() {
         {status === 'ready' && lyrics && !lyrics.synced && lyrics.line && lyricsInteractionMode === 'seek' && (
           <div className="space-y-2 py-4">
             {lyrics.line.map((line, index) => (
-              <p key={index} className="text-base text-text-primary">
+              <p key={index} className={`${lyricTextSizeClass} text-text-primary`}>
                 {renderPlainLine(line)}
               </p>
             ))}
