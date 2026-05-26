@@ -194,7 +194,8 @@ describe('LyricsScreen', () => {
 
     const tokenButton = await screen.findByRole('button', { name: '日本語' });
 
-    expect(tokenButton.className).toContain('after:bg-accent/70');
+    expect(tokenButton.className).toContain('underline');
+    expect(tokenButton.className).toContain('[text-decoration-thickness:auto]');
     expect(screen.queryByRole('button', { name: '日本語猫' })).toBeNull();
 
     await fireEvent.click(tokenButton);

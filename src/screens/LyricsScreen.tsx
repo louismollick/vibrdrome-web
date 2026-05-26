@@ -323,10 +323,10 @@ export default function LyricsScreen() {
             key={`${lineIndex}-${tokenIndex}-${token.text}`}
             type="button"
             onClick={() => setOverlayState({ lineIndex, tokenIndex, sessionKey: overlaySessionKey })}
-            className={`relative inline-block rounded-sm px-1 transition-colors after:pointer-events-none after:absolute after:right-px after:bottom-[0.1em] after:left-px after:h-px after:rounded-full after:content-[''] ${
+            className={`inline rounded-sm px-1 underline [text-decoration-thickness:auto] underline-offset-[0.16em] [text-decoration-skip-ink:none] transition-colors ${
               selected
-                ? 'bg-text-primary/12 text-text-primary after:bg-text-primary'
-                : 'after:bg-accent/70 hover:text-accent hover:after:bg-accent'
+                ? 'bg-text-primary/12 text-text-primary decoration-text-primary'
+                : 'decoration-accent/70 hover:text-accent hover:decoration-accent'
             }`}
           >
             {token.text}
@@ -343,7 +343,7 @@ export default function LyricsScreen() {
   };
 
   const renderDictionaryLyrics = (lines: LyricLine[], synced: boolean) => (
-    <div className={`py-4 ${synced ? 'space-y-3' : 'space-y-2'}`}>
+    <div className="space-y-7 py-4">
       {dictionaryModeMessage && dictionaryStateLoaded && (
         <div className="rounded-xl border border-border bg-bg-secondary/60 px-4 py-3 text-sm text-text-secondary">
           <p>{dictionaryModeMessage}</p>
@@ -418,7 +418,7 @@ export default function LyricsScreen() {
         )}
 
         {status === 'ready' && lyrics && lyrics.synced && lyrics.line && lyricsInteractionMode === 'seek' && (
-          <div className="space-y-3 py-4">
+          <div className="space-y-7 py-4">
             {lyrics.line.map((line, index) => {
               const isCurrent = index === currentLineIndex;
 
@@ -449,7 +449,7 @@ export default function LyricsScreen() {
         )}
 
         {status === 'ready' && lyrics && !lyrics.synced && lyrics.line && lyricsInteractionMode === 'seek' && (
-          <div className="space-y-2 py-4">
+          <div className="space-y-7 py-4">
             {lyrics.line.map((line, index) => (
               <p key={index} className={`${lyricTextSizeClass} text-text-primary`}>
                 {renderPlainLine(line)}
