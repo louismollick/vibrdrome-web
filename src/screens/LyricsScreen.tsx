@@ -418,7 +418,7 @@ export default function LyricsScreen() {
         )}
 
         {status === 'ready' && lyrics && lyrics.synced && lyrics.line && lyricsInteractionMode === 'seek' && (
-          <div className="space-y-3 py-4">
+          <div className="space-y-7 py-4">
             {lyrics.line.map((line, index) => {
               const isCurrent = index === currentLineIndex;
 
@@ -449,7 +449,7 @@ export default function LyricsScreen() {
         )}
 
         {status === 'ready' && lyrics && !lyrics.synced && lyrics.line && lyricsInteractionMode === 'seek' && (
-          <div className="space-y-2 py-4">
+          <div className="space-y-7 py-4">
             {lyrics.line.map((line, index) => (
               <p key={index} className={`${lyricTextSizeClass} text-text-primary`}>
                 {renderPlainLine(line)}
