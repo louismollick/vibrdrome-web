@@ -2,8 +2,12 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/subsonic';
 import { getSubsonicClient } from '../../api/SubsonicClient';
+import { getDownloadManager } from '../../audio/DownloadManager';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { useAuthStore } from '../../stores/authStore';
+import { useDownloadStore } from '../../stores/downloadStore';
 import { usePlayerStore } from '../../stores/playerStore';
+import { buildCacheId } from '../../utils/downloadCache';
 import { getOfflineMessage } from '../../utils/offlineCapability';
 import ContextMenu from './ContextMenu';
 
@@ -33,10 +37,16 @@ export default function SongRow({
   const navigate = useNavigate();
   const [starred, setStarred] = useState(!!song.starred);
   const isOnline = useOnlineStatus();
+  const activeServerId = useAuthStore((s) => s.activeServerId);
+  const isCachedForServer = useDownloadStore((s) => s.isCachedForServer);
+  const isQueuedForServer = useDownloadStore((s) => s.isQueuedForServer);
+  const removeFromCache = useDownloadStore((s) => s.removeFromCache);
 
   const displayNumber = showTrackNumber ? song.track : index !== undefined ? index + 1 : undefined;
   const favoritesOfflineMessage = getOfflineMessage('favoritesMutation');
   const artistRadioOfflineMessage = getOfflineMessage('artistRadio');
+  const isDownloaded = !!activeServerId && isCachedForServer(activeServerId, song.id);
+  const isQueued = !!activeServerId && isQueuedForServer(activeServerId, song.id);
 
   const handleStarToggle = async () => {
     if (!isOnline) return;
@@ -65,6 +75,19 @@ export default function SongRow({
       onClick: () => {
         usePlayerStore.getState().addToQueue(song);
       },
+    },
+    {
+      label: isDownloaded ? 'Remove download' : isQueued ? 'Downloading...' : 'Download',
+      onClick: () => {
+        if (!activeServerId) return;
+        if (isDownloaded) {
+          void removeFromCache(buildCacheId(activeServerId, song.id));
+          return;
+        }
+        if (!isOnline || isQueued) return;
+        getDownloadManager().queueSongs([song], song.albumId);
+      },
+      disabled: isDownloaded ? !activeServerId : !activeServerId || !isOnline || isQueued,
     },
     {
       label: 'Go to Album',
@@ -126,6 +149,26 @@ export default function SongRow({
           {showAlbum && song.album ? ` \u00B7 ${song.album}` : ''}
         </p>
       </div>
+
+      {(isDownloaded || isQueued) && (
+        <span
+          className={`flex shrink-0 items-center justify-center ${
+            isDownloaded ? 'text-accent' : 'animate-pulse text-text-muted'
+          }`}
+          aria-label={isDownloaded ? 'Available offline' : 'Downloading'}
+          title={isDownloaded ? 'Available offline' : 'Downloading'}
+        >
+          {isDownloaded ? (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+              <path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd" />
+            </svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+          )}
+        </span>
+      )}
 
       {/* Duration */}
       <span className="shrink-0 text-xs text-text-muted">

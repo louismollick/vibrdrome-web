@@ -16,6 +16,7 @@ type TestToken = {
 };
 
 const seekMock = vi.fn();
+const refreshLyricsMock = vi.fn(async () => {});
 
 const lyricsHookMocks = vi.hoisted(() => ({
   useCurrentSongLyrics: vi.fn(),
@@ -90,6 +91,8 @@ describe('LyricsScreen', () => {
           { start: 1000, value: '次の行' },
         ],
       },
+      refreshLyrics: refreshLyricsMock,
+      isRefreshing: false,
     });
 
     coreMocks.getInstalledDictionaries.mockResolvedValue([
@@ -230,6 +233,8 @@ describe('LyricsScreen', () => {
           { start: 0, value: 'I love 日本語' },
         ],
       },
+      refreshLyrics: refreshLyricsMock,
+      isRefreshing: false,
     });
     coreMocks.tokenizeText.mockResolvedValue([
       { text: 'I', reading: '', term: 'I', selectable: false, kind: 'other' },
@@ -263,5 +268,24 @@ describe('LyricsScreen', () => {
     await waitFor(() => {
       expect(screen.getByText(/No Yomitan dictionaries are installed/i)).toBeInTheDocument();
     });
+  });
+
+  it('calls refresh from the lyrics header action', async () => {
+    renderScreen();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh lyrics' }));
+
+    expect(refreshLyricsMock).toHaveBeenCalled();
+  });
+
+  it('disables refresh while offline', () => {
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    renderScreen();
+
+    expect(screen.getByRole('button', { name: 'Refresh lyrics' })).toBeDisabled();
   });
 });
