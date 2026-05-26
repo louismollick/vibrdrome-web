@@ -92,6 +92,8 @@ interface DownloadState {
   loadCachedSongs: () => Promise<void>;
   isCached: (cacheId: string) => boolean;
   isCachedForServer: (serverId: string, songId: string) => boolean;
+  isQueuedForServer: (serverId: string, songId: string) => boolean;
+  removeSongsFromCache: (serverId: string, songIds: string[]) => Promise<void>;
   getCachedSongsForServer: (serverId: string) => CachedSong[];
 }
 
@@ -448,5 +450,13 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
   isCached: (cacheId) => get().cachedSongs.has(cacheId),
   isCachedForServer: (serverId, songId) => get().cachedSongs.has(buildCacheId(serverId, songId)),
+  isQueuedForServer: (serverId, songId) => get().queue.some((item) => item.serverId === serverId && item.song.id === songId),
+  removeSongsFromCache: async (serverId, songIds) => {
+    for (const songId of songIds) {
+      const cacheId = buildCacheId(serverId, songId);
+      if (!get().cachedSongs.has(cacheId)) continue;
+      await get().removeFromCache(cacheId);
+    }
+  },
   getCachedSongsForServer: (serverId) => Array.from(get().cachedSongs.values()).filter((item) => item.serverId === serverId),
 }));

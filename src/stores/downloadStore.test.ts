@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from './authStore';
 import { useDownloadStore } from './downloadStore';
-import { deleteOfflineLyrics } from '../utils/offlineLyricsStore';
+import { clearOfflineLyrics, deleteOfflineLyrics } from '../utils/offlineLyricsStore';
 import { removeArtReference } from '../utils/offlineArtStore';
 
 const dbMock = {
@@ -219,5 +219,80 @@ describe('downloadStore', () => {
     const cached = useDownloadStore.getState().cachedSongs.get('server-1:song-1');
     expect(cached?.coverArtKeys).toEqual(['key-a', 'key-b']);
     expect(cached?.lyricsStored).toBe(true);
+  });
+
+  it('reports queued state per server', () => {
+    useDownloadStore.setState({
+      queue: [{
+        cacheId: 'server-1:song-1',
+        serverId: 'server-1',
+        serverName: 'Primary',
+        serverUrl: 'https://music.example.com',
+        username: 'alice',
+        cacheKey: 'audio-key',
+        downloadUrl: 'https://music.example.com/stream/song-1',
+        song: { id: 'song-1', title: 'Song 1' },
+        progress: 0,
+        requiredProgress: 0,
+        status: 'pending',
+        phase: 'pending',
+        optionalPhase: null,
+      }],
+    });
+
+    expect(useDownloadStore.getState().isQueuedForServer('server-1', 'song-1')).toBe(true);
+    expect(useDownloadStore.getState().isQueuedForServer('server-1', 'song-2')).toBe(false);
+    expect(useDownloadStore.getState().isQueuedForServer('server-2', 'song-1')).toBe(false);
+  });
+
+  it('removes only downloaded songs during bulk cache eviction', async () => {
+    useDownloadStore.setState({
+      cachedSongs: new Map([
+        ['server-1:song-1', {
+          cacheId: 'server-1:song-1',
+          songId: 'song-1',
+          serverId: 'server-1',
+          serverName: 'Primary',
+          serverUrl: 'https://music.example.com',
+          username: 'alice',
+          cacheKey: 'audio-key-1',
+          title: 'Song 1',
+          size: 123,
+          cachedAt: Date.now(),
+          requiredAssetsReady: true,
+          lyricsStored: true,
+        }],
+        ['server-1:song-3', {
+          cacheId: 'server-1:song-3',
+          songId: 'song-3',
+          serverId: 'server-1',
+          serverName: 'Primary',
+          serverUrl: 'https://music.example.com',
+          username: 'alice',
+          cacheKey: 'audio-key-3',
+          title: 'Song 3',
+          size: 456,
+          cachedAt: Date.now(),
+          requiredAssetsReady: true,
+          lyricsStored: true,
+        }],
+      ]),
+      totalCachedSize: 579,
+    });
+
+    await useDownloadStore.getState().removeSongsFromCache('server-1', ['song-1', 'song-2', 'song-3']);
+
+    expect(deleteOfflineLyrics).toHaveBeenCalledTimes(2);
+    expect(deleteOfflineLyrics).toHaveBeenNthCalledWith(1, 'server-1', 'song-1');
+    expect(deleteOfflineLyrics).toHaveBeenNthCalledWith(2, 'server-1', 'song-3');
+    expect(useDownloadStore.getState().cachedSongs.size).toBe(0);
+  });
+
+  it('clears persisted lyrics during clear-all eviction', async () => {
+    useDownloadStore.getState().clearAllCached();
+
+    await Promise.resolve();
+
+    expect(clearOfflineLyrics).toHaveBeenCalled();
   });
 });

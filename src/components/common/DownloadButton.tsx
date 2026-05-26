@@ -1,6 +1,7 @@
 import { useDownloadStore } from '../../stores/downloadStore';
 import { useAuthStore } from '../../stores/authStore';
 import { getDownloadManager } from '../../audio/DownloadManager';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import type { Song } from '../../types/subsonic';
 
 interface DownloadButtonProps {
@@ -12,29 +13,60 @@ interface DownloadButtonProps {
 export default function DownloadButton({ songs, albumId, className = '' }: DownloadButtonProps) {
   const activeServerId = useAuthStore((s) => s.activeServerId);
   const isCachedForServer = useDownloadStore((s) => s.isCachedForServer);
-  const queue = useDownloadStore((s) => s.queue);
+  const isQueuedForServer = useDownloadStore((s) => s.isQueuedForServer);
+  const removeSongsFromCache = useDownloadStore((s) => s.removeSongsFromCache);
+  const isOnline = useOnlineStatus();
 
   const allCached = !!activeServerId && songs.length > 0 && songs.every((song) => isCachedForServer(activeServerId, song.id));
-  const someInQueue = !!activeServerId && songs.some((song) => queue.some((q) => q.serverId === activeServerId && q.song.id === song.id));
+  const someCached = !!activeServerId && songs.some((song) => isCachedForServer(activeServerId, song.id));
+  const someInQueue = !!activeServerId && songs.some((song) => isQueuedForServer(activeServerId, song.id));
+
+  const queuedOrCachedIds = activeServerId
+    ? new Set(
+      songs
+        .filter((song) => isCachedForServer(activeServerId, song.id) || isQueuedForServer(activeServerId, song.id))
+        .map((song) => song.id),
+    )
+    : new Set<string>();
+  const songsToQueue = songs.filter((song) => !queuedOrCachedIds.has(song.id));
+
+  const isDisabled = songs.length === 0 || !activeServerId || (!allCached && !isOnline);
+  const label = allCached ? 'Remove download' : someInQueue ? 'Downloading...' : 'Download for offline';
+  const title = !isOnline && !allCached
+    ? 'Reconnect to download for offline use'
+    : allCached
+      ? 'Remove download'
+      : someInQueue
+        ? 'Downloading...'
+        : someCached
+          ? 'Download remaining songs for offline'
+          : 'Download for offline';
 
   const handleClick = () => {
-    if (allCached) return;
-    getDownloadManager().queueSongs(songs, albumId);
+    if (!activeServerId) return;
+    if (allCached) {
+      void removeSongsFromCache(activeServerId, songs.map((song) => song.id));
+      return;
+    }
+    if (!isOnline || songsToQueue.length === 0) return;
+    getDownloadManager().queueSongs(songsToQueue, albumId);
   };
 
   return (
     <button
       onClick={handleClick}
-      disabled={allCached}
+      disabled={isDisabled}
       className={`flex h-9 w-9 items-center justify-center rounded-full border border-border transition-colors ${
         allCached
           ? 'text-accent border-accent/30'
           : someInQueue
             ? 'text-text-muted animate-pulse'
+            : isDisabled
+              ? 'cursor-not-allowed text-text-muted'
             : 'text-text-secondary hover:bg-bg-tertiary'
       } ${className}`}
-      aria-label={allCached ? 'Downloaded' : someInQueue ? 'Downloading...' : 'Download for offline'}
-      title={allCached ? 'Available offline' : someInQueue ? 'Downloading...' : 'Download for offline'}
+      aria-label={label}
+      title={title}
     >
       {allCached ? (
         // Checkmark

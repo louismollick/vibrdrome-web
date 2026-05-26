@@ -8,6 +8,7 @@ import type { LyricLine } from '../types/subsonic';
 import { Header, LoadingSpinner, StateMessage } from '../components/common';
 import YomitanOverlay from '../components/lyrics/YomitanOverlay';
 import { useCurrentSongLyrics } from '../hooks/useCurrentSongLyrics';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getOfflineMessage } from '../utils/offlineCapability';
 import {
   buildLyricsTokenizationJobKey,
@@ -70,7 +71,8 @@ export default function LyricsScreen() {
   const positionMs = usePlayerStore((state) => state.positionMs);
   const lyricsInteractionMode = useUIStore((state) => state.lyricsInteractionMode);
   const setLyricsInteractionMode = useUIStore((state) => state.setLyricsInteractionMode);
-  const { lyrics, status } = useCurrentSongLyrics(currentSong?.id);
+  const { lyrics, status, refreshLyrics, isRefreshing } = useCurrentSongLyrics(currentSong?.id);
+  const isOnline = useOnlineStatus();
 
   const [installedDictionaries, setInstalledDictionaries] = useState<YomitanDictionarySummary[]>([]);
   const [dictionaryPreferences, setDictionaryPreferences] = useState<DictionaryPreference[]>([]);
@@ -257,7 +259,30 @@ export default function LyricsScreen() {
   };
 
   const rightActions = (
-    <div className="flex items-center rounded-full border border-border bg-bg-secondary/80 p-1">
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => void refreshLyrics()}
+        disabled={!currentSong || !isOnline || isRefreshing}
+        className={`flex h-10 w-10 items-center justify-center rounded-full border border-border bg-bg-secondary/80 transition-colors ${
+          !currentSong || !isOnline || isRefreshing
+            ? 'cursor-not-allowed text-text-muted'
+            : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+        }`}
+        aria-label={isRefreshing ? 'Refreshing lyrics' : 'Refresh lyrics'}
+        title={!isOnline ? 'Refresh lyrics unavailable offline' : isRefreshing ? 'Refreshing lyrics' : 'Refresh lyrics'}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M20 11a8 8 0 10-2.34 5.66M20 4v7h-7" />
+        </svg>
+      </button>
+      <div className="flex items-center rounded-full border border-border bg-bg-secondary/80 p-1">
       <button
         onClick={() => setLyricsInteractionMode('seek')}
         className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
@@ -304,6 +329,7 @@ export default function LyricsScreen() {
           <path d="M16 7S9 1 2 6v22c7-5 14 0 14 0s7-5 14 0V6c-7-5-14 1-14 1m0 0v21" />
         </svg>
       </button>
+      </div>
     </div>
   );
 
