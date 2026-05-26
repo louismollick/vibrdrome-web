@@ -343,7 +343,7 @@ export default function LyricsScreen() {
   };
 
   const renderDictionaryLyrics = (lines: LyricLine[], synced: boolean) => (
-    <div className="space-y-[28.8px] py-4">
+    <div className="space-y-7 py-4">
       {dictionaryModeMessage && dictionaryStateLoaded && (
         <div className="rounded-xl border border-border bg-bg-secondary/60 px-4 py-3 text-sm text-text-secondary">
           <p>{dictionaryModeMessage}</p>
