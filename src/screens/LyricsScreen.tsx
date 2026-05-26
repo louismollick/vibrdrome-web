@@ -323,7 +323,7 @@ export default function LyricsScreen() {
             key={`${lineIndex}-${tokenIndex}-${token.text}`}
             type="button"
             onClick={() => setOverlayState({ lineIndex, tokenIndex, sessionKey: overlaySessionKey })}
-            className={`inline rounded-sm px-1 underline decoration-[0.16em] underline-offset-[0.16em] [text-decoration-skip-ink:none] transition-colors ${
+            className={`inline rounded-sm px-1 underline [text-decoration-thickness:auto] underline-offset-[0.16em] [text-decoration-skip-ink:none] transition-colors ${
               selected
                 ? 'bg-text-primary/12 text-text-primary decoration-text-primary'
                 : 'decoration-accent/70 hover:text-accent hover:decoration-accent'
@@ -343,7 +343,7 @@ export default function LyricsScreen() {
   };
 
   const renderDictionaryLyrics = (lines: LyricLine[], synced: boolean) => (
-    <div className={`py-4 ${synced ? 'space-y-3' : 'space-y-2'}`}>
+    <div className="space-y-[28.8px] py-4">
       {dictionaryModeMessage && dictionaryStateLoaded && (
         <div className="rounded-xl border border-border bg-bg-secondary/60 px-4 py-3 text-sm text-text-secondary">
           <p>{dictionaryModeMessage}</p>
