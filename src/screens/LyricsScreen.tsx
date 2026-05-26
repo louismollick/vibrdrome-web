@@ -323,10 +323,10 @@ export default function LyricsScreen() {
             key={`${lineIndex}-${tokenIndex}-${token.text}`}
             type="button"
             onClick={() => setOverlayState({ lineIndex, tokenIndex, sessionKey: overlaySessionKey })}
-            className={`relative inline-block rounded-sm px-1 transition-colors after:pointer-events-none after:absolute after:right-px after:bottom-[0.1em] after:left-px after:h-px after:rounded-full after:content-[''] ${
+            className={`inline rounded-sm px-1 underline decoration-[0.16em] underline-offset-[0.16em] [text-decoration-skip-ink:none] transition-colors ${
               selected
-                ? 'bg-text-primary/12 text-text-primary after:bg-text-primary'
-                : 'after:bg-accent/70 hover:text-accent hover:after:bg-accent'
+                ? 'bg-text-primary/12 text-text-primary decoration-text-primary'
+                : 'decoration-accent/70 hover:text-accent hover:decoration-accent'
             }`}
           >
             {token.text}
